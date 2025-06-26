@@ -1,0 +1,238 @@
+Option Explicit
+
+' =========================================================================================
+' MACRO PRINCIPAL DE TRANSFORMACIÓN (Versión Final Consolidada)
+' Creada en base a todas las instrucciones proporcionadas (1-28).
+' =========================================================================================
+Sub TransformarDatosInbk()
+
+    ' --- DECLARACIÓN DE VARIABLES ---
+    Dim wb As Workbook
+    Dim wsInput As Worksheet, wsOutput As Worksheet, wsRates As Worksheet, wsAccounts As Worksheet
+    Dim lastRowInput As Long, lastRowRates As Long, lastRowAccounts As Long
+    Dim outputRow As Long
+    Dim i As Long, j As Long, k As Long
+    
+    Dim exchangeRates As Object, accountList As Object
+    
+    Dim txnDate As Date
+    Dim lookupCode As String
+    Dim originalAmount As Double
+    Dim originalCurrency As String
+    Dim rate As Double
+    Dim rateKey As String
+    
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    ' --- CONFIGURACIÓN DE HOJAS DE CÁLCULO ---
+    Set wb = ThisWorkbook
+    
+    On Error Resume Next
+    Set wsInput = wb.Sheets("Hoja 1")
+    Set wsRates = wb.Sheets("Tipos de Cambio")
+    Set wsAccounts = wb.Sheets("Listado de Cuentas")
+    On Error GoTo 0
+    
+    If wsInput Is Nothing Then MsgBox "Error: No se encontró la hoja 'Hoja 1'.", vbCritical: GoTo Cleanup
+    If wsRates Is Nothing Then MsgBox "Error: No se encontró la hoja 'Tipos de Cambio'.", vbCritical: GoTo Cleanup
+    If wsAccounts Is Nothing Then MsgBox "Error: No se encontró la hoja 'Listado de Cuentas'.", vbCritical: GoTo Cleanup
+
+    ' --- CARGA DE DATOS DE BÚSQUEDA ---
+    Set exchangeRates = CreateObject("Scripting.Dictionary")
+    Set accountList = CreateObject("Scripting.Dictionary")
+    
+    lastRowRates = wsRates.Cells(wsRates.Rows.Count, "A").End(xlUp).row
+    For j = 2 To lastRowRates
+        Dim rateDate As Date: rateDate = CDate(wsRates.Cells(j, "A").Value)
+        Dim gbpRate As Double: gbpRate = ConvertirADouble(wsRates.Cells(j, "B").Text)
+        Dim eurRate As Double: eurRate = ConvertirADouble(wsRates.Cells(j, "C").Text)
+        Dim rateKeyGbp As String: rateKeyGbp = Format(rateDate, "dd/mm/yyyy") & "|GBP"
+        Dim rateKeyEur As String: rateKeyEur = Format(rateDate, "dd/mm/yyyy") & "|EUR"
+        If Not exchangeRates.Exists(rateKeyGbp) Then exchangeRates.Add rateKeyGbp, gbpRate
+        If Not exchangeRates.Exists(rateKeyEur) Then exchangeRates.Add rateKeyEur, eurRate
+    Next j
+    
+    lastRowAccounts = wsAccounts.Cells(wsAccounts.Rows.Count, "A").End(xlUp).row
+    For k = 2 To lastRowAccounts
+        Dim kyribaCode As String: kyribaCode = Trim(wsAccounts.Cells(k, "A").Value)
+        Dim qbName As String: qbName = Trim(wsAccounts.Cells(k, "B").Value)
+        If Not accountList.Exists(kyribaCode) And kyribaCode <> "" Then accountList.Add kyribaCode, qbName
+    Next k
+
+    ' --- PREPARACIÓN DE LA HOJA DE SALIDA ---
+    Application.DisplayAlerts = False
+    On Error Resume Next
+    wb.Sheets("Tabla Transformada").Delete
+    On Error GoTo 0
+    Application.DisplayAlerts = True
+    
+    Set wsOutput = wb.Sheets.Add(After:=wsInput)
+    wsOutput.Name = "Tabla Transformada"
+
+    ' Cabeceras para tabla final y columnas auxiliares
+    With wsOutput
+        .Range("A1:I1") = Array("RefNumber", "TxnDate", "Account", "Amount", "Entity", "Description", "Currency", "OrigAmountF_Helper", "TxnTypeHelper")
+    End With
+
+    ' --- PROCESAMIENTO DE DATOS ---
+    lastRowInput = wsInput.Cells(wsInput.Rows.Count, "J").End(xlUp).row
+    outputRow = 2
+
+    For i = 2 To lastRowInput
+        If InStr(UCase(Trim(wsInput.Cells(i, "J").Value)), "INBK") > 0 Then
+            
+            txnDate = CDate(wsInput.Cells(i, "D").Value)
+            wsOutput.Cells(outputRow, "B").Value = txnDate
+            wsOutput.Cells(outputRow, "B").NumberFormat = "dd/mm/yyyy"
+
+            wsOutput.Cells(outputRow, "A").Value = Day(txnDate)
+
+            lookupCode = Trim(wsInput.Cells(i, "A").Value)
+            If accountList.Exists(lookupCode) Then wsOutput.Cells(outputRow, "C").Value = accountList(lookupCode) Else wsOutput.Cells(outputRow, "C").Value = "Cuenta no encontrada"
+            
+            originalAmount = ConvertirADouble(wsInput.Cells(i, "H").Text)
+            originalCurrency = UCase(Trim(wsInput.Cells(i, "E").Value))
+
+            If originalCurrency = "USD" Then
+                wsOutput.Cells(outputRow, "D").Value = originalAmount
+            ElseIf originalCurrency = "EUR" Or originalCurrency = "GBP" Then
+                rateKey = Format(txnDate, "dd/mm/yyyy") & "|" & originalCurrency
+                If exchangeRates.Exists(rateKey) Then
+                    rate = exchangeRates(rateKey)
+                    ' Se multiplica, según la interpretación correcta de las tasas EUR/USD y GBP/USD
+                    wsOutput.Cells(outputRow, "D").Value = originalAmount * rate
+                Else
+                    wsOutput.Cells(outputRow, "D").Value = 0
+                End If
+            Else
+                wsOutput.Cells(outputRow, "D").Value = 0
+            End If
+            
+            wsOutput.Cells(outputRow, "D").NumberFormat = "#,##0.00"
+            wsOutput.Cells(outputRow, "E").Value = ""
+            wsOutput.Cells(outputRow, "F").Value = wsInput.Cells(i, "K").Value
+            wsOutput.Cells(outputRow, "G").Value = "USD"
+            
+            ' Guardar datos en columnas auxiliares para el resaltado y ordenamiento posterior
+            ' Columna H: Importe de origen de la Columna F de la tabla original, para el resaltado naranja
+            wsOutput.Cells(outputRow, "H").Value = Abs(ConvertirADouble(wsInput.Cells(i, "F").Text))
+            ' Columna I: Tipo de transacción (+INBK / -INBK)
+            wsOutput.Cells(outputRow, "I").Value = UCase(Trim(wsInput.Cells(i, "J").Value))
+            
+            outputRow = outputRow + 1
+        End If
+    Next i
+
+    ' --- FINALIZACIÓN Y FORMATEO ---
+    If outputRow > 2 Then
+        Dim lastDataRow As Long
+        lastDataRow = outputRow - 1
+        
+        ' 1. Identificar todos los grupos de duplicados (exactos y por importe original)
+        Dim exactMap As Object: Set exactMap = CreateObject("Scripting.Dictionary")
+        Dim orangeMap As Object: Set orangeMap = CreateObject("Scripting.Dictionary")
+        Dim rowNum As Long
+        Dim finalAbsAmount As Double, origAmountKey As Double
+        
+        For rowNum = 2 To lastDataRow
+            finalAbsAmount = Abs(wsOutput.Cells(rowNum, "D").Value)
+            origAmountKey = wsOutput.Cells(rowNum, "H").Value
+            
+            ' Poblar diccionario para duplicados exactos (VERDE)
+            If Not exactMap.Exists(finalAbsAmount) Then Set exactMap(finalAbsAmount) = New Collection
+            exactMap(finalAbsAmount).Add rowNum
+            
+            ' Poblar diccionario para duplicados por importe de origen (NARANJA)
+            If Not orangeMap.Exists(origAmountKey) Then Set orangeMap(origAmountKey) = New Collection
+            orangeMap(origAmountKey).Add rowNum
+        Next rowNum
+
+        ' 2. Aplicar colores con las reglas de precedencia
+        Dim greenColor As Long: greenColor = RGB(198, 239, 206)
+        Dim orangeColor As Long: orangeColor = RGB(255, 219, 198)
+        Dim key As Variant, rowsInGroup As Collection, item As Variant
+
+        ' Aplicar VERDE
+        For Each key In exactMap.Keys
+            Set rowsInGroup = exactMap(key)
+            If rowsInGroup.Count > 1 Then
+                For Each item In rowsInGroup
+                    wsOutput.Cells(item, "D").Interior.Color = greenColor
+                Next item
+            End If
+        Next key
+        
+        ' Aplicar NARANJA a las celdas restantes que cumplan la condición
+        For Each key In orangeMap.Keys
+            Set rowsInGroup = orangeMap(key)
+            If rowsInGroup.Count > 1 Then ' Si hay más de una fila con el mismo importe de origen
+                ' Verificar que haya al menos un +INBK y un -INBK en el grupo
+                Dim hasPlus As Boolean: hasPlus = False
+                Dim hasMinus As Boolean: hasMinus = False
+                For Each item In rowsInGroup
+                    If wsOutput.Cells(item, "I").Value = "+INBK" Then hasPlus = True
+                    If wsOutput.Cells(item, "I").Value = "-INBK" Then hasMinus = True
+                Next item
+                
+                If hasPlus And hasMinus Then ' Si es un par válido
+                    For Each item In rowsInGroup
+                        ' Solo pintar si la celda no es ya verde
+                        If wsOutput.Cells(item, "D").Interior.ColorIndex = xlNone Then
+                            wsOutput.Cells(item, "D").Interior.Color = orangeColor
+                        End If
+                    Next item
+                End If
+            End If
+        Next key
+        
+        ' 3. Ordenar la tabla al final por el valor absoluto del importe final en USD (Columna D)
+        With wsOutput.Range("H2:H" & lastDataRow)
+            .FormulaR1C1 = "=ABS(RC[-4])"
+            .Value = .Value
+        End With
+        
+        With wsOutput.Sort
+            .SortFields.Clear
+            .SortFields.Add2 key:=wsOutput.Range("H2:H" & lastDataRow), SortOn:=xlSortOnValues, Order:=xlAscending
+            .SetRange wsOutput.Range("A1:I" & lastDataRow)
+            .Header = xlYes: .MatchCase = False: .Orientation = xlTopToBottom: .SortMethod = xlPinYin: .Apply
+        End With
+
+        ' 4. Eliminar las columnas auxiliares H e I
+        wsOutput.Columns("H:I").Delete
+    End If
+    
+    ' 5. Ajustar el ancho de las columnas
+    wsOutput.Columns("A:G").AutoFit
+
+    MsgBox "Proceso de transformación completado con éxito.", vbInformation
+
+Cleanup:
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+End Sub
+
+
+' =========================================================================================
+' FUNCIÓN AUXILIAR PARA CONVERTIR TEXTO A NÚMERO DE FORMA ROBUSTA
+' =========================================================================================
+Private Function ConvertirADouble(ByVal numberString As String) As Double
+    On Error GoTo ErrorHandler
+    Dim cleanString As String, lastCommaPos As Integer, lastPeriodPos As Integer
+    cleanString = Trim(numberString)
+    lastCommaPos = InStrRev(cleanString, ",")
+    lastPeriodPos = InStrRev(cleanString, ".")
+    If lastCommaPos > lastPeriodPos Then
+        cleanString = Replace(cleanString, ".", "")
+        cleanString = Replace(cleanString, ",", ".")
+    ElseIf lastPeriodPos > lastCommaPos Then
+        cleanString = Replace(cleanString, ",", "")
+    Else
+        cleanString = Replace(cleanString, ",", ".")
+    End If
+    If IsNumeric(cleanString) Then ConvertirADouble = Val(cleanString) Else ConvertirADouble = 0
+    Exit Function
+ErrorHandler:
+    ConvertirADouble = 0
+End Function
