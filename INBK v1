@@ -262,6 +262,12 @@ Sub TransformarDatosInbk()
             .SortMethod = xlPinYin
             .Apply
         End With
+        
+        ' --- 4. CAMBIO DE SIGNO EN COLUMNA D ---
+        For rowNum = 2 To lastDataRow
+            wsOutput.Cells(rowNum, "D").Value = wsOutput.Cells(rowNum, "D").Value * -1
+        Next rowNum
+        
     End If
     
     wsOutput.Columns("A:G").AutoFit
@@ -304,7 +310,7 @@ Private Sub CrearReporteFinal(ByVal wsSource As Worksheet)
 
         Dim cellColor As Long: cellColor = wsSource.Cells(rowNum, "D").Interior.Color
         
-        If (cellColor = orangeColor Or cellColor = greenColor) And wsSource.Cells(rowNum, "D").Value < 0 Then
+        If (cellColor = orangeColor Or cellColor = greenColor) And wsSource.Cells(rowNum, "D").Value > 0 Then
             
             Dim partnerRowNum As Long: partnerRowNum = rowNum + 1
             sheetName = Left(wsSource.Cells(rowNum, "C").Value, 31)
@@ -328,6 +334,7 @@ Private Sub CrearReporteFinal(ByVal wsSource As Worksheet)
 NextIteration:
     Next rowNum
     
+    
     Dim nextReviewRow As Long
     nextReviewRow = wsReview.Cells(wsReview.Rows.Count, "A").End(xlUp).row + 1
     
@@ -345,6 +352,7 @@ NextIteration:
     
     Application.DisplayAlerts = False
     savePath = Application.GetSaveAsFilename(InitialFileName:="Reporte de Transferencias Cruzadas.xlsx", FileFilter:="Excel Files (*.xlsx), *.xlsx")
+
     If savePath <> False Then
         wbNew.SaveAs Filename:=savePath
         MsgBox "Proceso de transformación y reporte completado con éxito." & vbCrLf & "El nuevo archivo ha sido guardado en: " & savePath, vbInformation
