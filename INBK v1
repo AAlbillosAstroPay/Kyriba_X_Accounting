@@ -1,8 +1,5 @@
-Option Explicit
-
 ' =========================================================================================
-' MACRO PRINCIPAL DE TRANSFORMACIÓN (Versión Final Consolidada)
-' Creada en base a todas las instrucciones proporcionadas (1-28).
+' MACRO PRINCIPAL DE TRANSFORMACIÓN (Versión Final con Ordenación por ID de Par)
 ' =========================================================================================
 Sub TransformarDatosInbk()
 
@@ -17,7 +14,12 @@ Sub TransformarDatosInbk()
     
     Dim txnDate As Date
     Dim lookupCode As String
-    Dim originalAmount As Double
+    
+    Dim flowType As String
+    Dim accountAmount As Double
+    Dim signedAmount As Double
+    Dim txnDirection As String
+    
     Dim originalCurrency As String
     Dim rate As Double
     Dim rateKey As String
@@ -60,7 +62,7 @@ Sub TransformarDatosInbk()
         If Not accountList.Exists(kyribaCode) And kyribaCode <> "" Then accountList.Add kyribaCode, qbName
     Next k
 
-    ' --- PREPARACIÓN DE LA HOJA DE SALIDA ---
+    ' --- PREPARACIÓN DE LA HOJA DE SALIDA "Tabla Transformada" ---
     Application.DisplayAlerts = False
     On Error Resume Next
     wb.Sheets("Tabla Transformada").Delete
@@ -70,9 +72,9 @@ Sub TransformarDatosInbk()
     Set wsOutput = wb.Sheets.Add(After:=wsInput)
     wsOutput.Name = "Tabla Transformada"
 
-    ' Cabeceras para tabla final y columnas auxiliares
+    ' Nueva columna auxiliar K para el ID de Par
     With wsOutput
-        .Range("A1:I1") = Array("RefNumber", "TxnDate", "Account", "Amount", "Entity", "Description", "Currency", "OrigAmountF_Helper", "TxnTypeHelper")
+        .Range("A1:K1") = Array("RefNumber", "TxnDate", "Account", "Amount", "Entity", "Description", "Currency", "OrigAmountF_Helper", "TxnDirectionHelper", "AccountCodeHelper", "PairID_Helper")
     End With
 
     ' --- PROCESAMIENTO DE DATOS ---
@@ -85,23 +87,38 @@ Sub TransformarDatosInbk()
             txnDate = CDate(wsInput.Cells(i, "D").Value)
             wsOutput.Cells(outputRow, "B").Value = txnDate
             wsOutput.Cells(outputRow, "B").NumberFormat = "dd/mm/yyyy"
-
             wsOutput.Cells(outputRow, "A").Value = Day(txnDate)
 
             lookupCode = Trim(wsInput.Cells(i, "A").Value)
             If accountList.Exists(lookupCode) Then wsOutput.Cells(outputRow, "C").Value = accountList(lookupCode) Else wsOutput.Cells(outputRow, "C").Value = "Cuenta no encontrada"
             
-            originalAmount = ConvertirADouble(wsInput.Cells(i, "H").Text)
-            originalCurrency = UCase(Trim(wsInput.Cells(i, "E").Value))
+            flowType = Trim(wsInput.Cells(i, "B").Value)
+            accountAmount = ConvertirADouble(wsInput.Cells(i, "H").Text)
+            
+            If Left(flowType, 1) = "-" Then
+                signedAmount = -Abs(accountAmount)
+                txnDirection = "OUT"
+            ElseIf Left(flowType, 1) = "+" Then
+                If accountAmount >= 0 Then
+                    signedAmount = Abs(accountAmount)
+                    txnDirection = "IN"
+                Else
+                    signedAmount = -Abs(accountAmount)
+                    txnDirection = "OUT"
+                End If
+            Else
+                signedAmount = accountAmount
+                txnDirection = "UNKNOWN"
+            End If
 
+            originalCurrency = UCase(Trim(wsInput.Cells(i, "E").Value))
             If originalCurrency = "USD" Then
-                wsOutput.Cells(outputRow, "D").Value = originalAmount
+                wsOutput.Cells(outputRow, "D").Value = signedAmount
             ElseIf originalCurrency = "EUR" Or originalCurrency = "GBP" Then
                 rateKey = Format(txnDate, "dd/mm/yyyy") & "|" & originalCurrency
                 If exchangeRates.Exists(rateKey) Then
                     rate = exchangeRates(rateKey)
-                    ' Se multiplica, según la interpretación correcta de las tasas EUR/USD y GBP/USD
-                    wsOutput.Cells(outputRow, "D").Value = originalAmount * rate
+                    wsOutput.Cells(outputRow, "D").Value = signedAmount * rate
                 Else
                     wsOutput.Cells(outputRow, "D").Value = 0
                 End If
@@ -114,108 +131,243 @@ Sub TransformarDatosInbk()
             wsOutput.Cells(outputRow, "F").Value = wsInput.Cells(i, "K").Value
             wsOutput.Cells(outputRow, "G").Value = "USD"
             
-            ' Guardar datos en columnas auxiliares para el resaltado y ordenamiento posterior
-            ' Columna H: Importe de origen de la Columna F de la tabla original, para el resaltado naranja
             wsOutput.Cells(outputRow, "H").Value = Abs(ConvertirADouble(wsInput.Cells(i, "F").Text))
-            ' Columna I: Tipo de transacción (+INBK / -INBK)
-            wsOutput.Cells(outputRow, "I").Value = UCase(Trim(wsInput.Cells(i, "J").Value))
+            wsOutput.Cells(outputRow, "I").Value = txnDirection
+            wsOutput.Cells(outputRow, "J").Value = lookupCode
             
             outputRow = outputRow + 1
         End If
     Next i
 
-    ' --- FINALIZACIÓN Y FORMATEO ---
+    ' --- FINALIZACIÓN Y FORMATEO DE "Tabla Transformada" ---
     If outputRow > 2 Then
         Dim lastDataRow As Long
         lastDataRow = outputRow - 1
         
-        ' 1. Identificar todos los grupos de duplicados (exactos y por importe original)
-        Dim exactMap As Object: Set exactMap = CreateObject("Scripting.Dictionary")
-        Dim orangeMap As Object: Set orangeMap = CreateObject("Scripting.Dictionary")
-        Dim rowNum As Long
-        Dim finalAbsAmount As Double, origAmountKey As Double
-        
-        For rowNum = 2 To lastDataRow
-            finalAbsAmount = Abs(wsOutput.Cells(rowNum, "D").Value)
-            origAmountKey = wsOutput.Cells(rowNum, "H").Value
-            
-            ' Poblar diccionario para duplicados exactos (VERDE)
-            If Not exactMap.Exists(finalAbsAmount) Then Set exactMap(finalAbsAmount) = New Collection
-            exactMap(finalAbsAmount).Add rowNum
-            
-            ' Poblar diccionario para duplicados por importe de origen (NARANJA)
-            If Not orangeMap.Exists(origAmountKey) Then Set orangeMap(origAmountKey) = New Collection
-            orangeMap(origAmountKey).Add rowNum
-        Next rowNum
-
-        ' 2. Aplicar colores con las reglas de precedencia
         Dim greenColor As Long: greenColor = RGB(198, 239, 206)
         Dim orangeColor As Long: orangeColor = RGB(255, 219, 198)
-        Dim key As Variant, rowsInGroup As Collection, item As Variant
-
-        ' Aplicar VERDE
-        For Each key In exactMap.Keys
-            Set rowsInGroup = exactMap(key)
-            If rowsInGroup.Count > 1 Then
-                For Each item In rowsInGroup
-                    wsOutput.Cells(item, "D").Interior.Color = greenColor
-                Next item
-            End If
-        Next key
+        Dim rowNum As Long, amountKey As Variant
+        Dim alreadyMatched As Object: Set alreadyMatched = CreateObject("Scripting.Dictionary")
         
-        ' Aplicar NARANJA a las celdas restantes que cumplan la condición
-        For Each key In orangeMap.Keys
-            Set rowsInGroup = orangeMap(key)
-            If rowsInGroup.Count > 1 Then ' Si hay más de una fila con el mismo importe de origen
-                ' Verificar que haya al menos un +INBK y un -INBK en el grupo
-                Dim hasPlus As Boolean: hasPlus = False
-                Dim hasMinus As Boolean: hasMinus = False
-                For Each item In rowsInGroup
-                    If wsOutput.Cells(item, "I").Value = "+INBK" Then hasPlus = True
-                    If wsOutput.Cells(item, "I").Value = "-INBK" Then hasMinus = True
-                Next item
+        Dim direction As String, accountCode As String
+        Dim outData As Variant, inData As Variant
+        Dim pairIDCounter As Long: pairIDCounter = 1
+
+        ' --- 1. LÓGICA DE CRUCE VERDE ---
+        Dim exactInRows As Object: Set exactInRows = CreateObject("Scripting.Dictionary")
+        Dim exactOutRows As Object: Set exactOutRows = CreateObject("Scripting.Dictionary")
+
+        For rowNum = 2 To lastDataRow
+            Dim finalAmount As Double: finalAmount = Abs(wsOutput.Cells(rowNum, "D").Value)
+            direction = wsOutput.Cells(rowNum, "I").Value
+            accountCode = wsOutput.Cells(rowNum, "J").Value
+
+            If direction = "IN" Then
+                If Not exactInRows.Exists(finalAmount) Then Set exactInRows(finalAmount) = New Collection
+                exactInRows(finalAmount).Add Array(rowNum, accountCode)
+            ElseIf direction = "OUT" Then
+                If Not exactOutRows.Exists(finalAmount) Then Set exactOutRows(finalAmount) = New Collection
+                exactOutRows(finalAmount).Add Array(rowNum, accountCode)
+            End If
+        Next rowNum
+
+        For Each amountKey In exactOutRows.Keys
+            If exactInRows.Exists(amountKey) Then
+                For Each outData In exactOutRows(amountKey)
+                    If Not alreadyMatched.Exists(outData(0)) Then
+                        For Each inData In exactInRows(amountKey)
+                            If Not alreadyMatched.Exists(inData(0)) And inData(1) <> outData(1) Then
+                                wsOutput.Cells(inData(0), "D").Value = Abs(wsOutput.Cells(outData(0), "D").Value)
+                                wsOutput.Cells(inData(0), "B").Value = wsOutput.Cells(outData(0), "B").Value
+                                wsOutput.Cells(inData(0), "A").Value = wsOutput.Cells(outData(0), "A").Value
+
+                                wsOutput.Cells(outData(0), "D").Interior.Color = greenColor
+                                wsOutput.Cells(inData(0), "D").Interior.Color = greenColor
+                                
+                                wsOutput.Cells(outData(0), "K").Value = pairIDCounter
+                                wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+                                pairIDCounter = pairIDCounter + 1
+                                
+                                alreadyMatched.Add outData(0), True
+                                alreadyMatched.Add inData(0), True
+                                Exit For
+                            End If
+                        Next inData
+                    End If
+                Next outData
+            End If
+        Next amountKey
+
+        ' --- 2. LÓGICA DE CRUCE NARANJA ---
+        Dim origInRows As Object: Set origInRows = CreateObject("Scripting.Dictionary")
+        Dim origOutRows As Object: Set origOutRows = CreateObject("Scripting.Dictionary")
+
+        For rowNum = 2 To lastDataRow
+            If Not alreadyMatched.Exists(rowNum) Then
+                Dim origAmount As Double: origAmount = wsOutput.Cells(rowNum, "H").Value
+                direction = wsOutput.Cells(rowNum, "I").Value
+                accountCode = wsOutput.Cells(rowNum, "J").Value
                 
-                If hasPlus And hasMinus Then ' Si es un par válido
-                    For Each item In rowsInGroup
-                        ' Solo pintar si la celda no es ya verde
-                        If wsOutput.Cells(item, "D").Interior.ColorIndex = xlNone Then
-                            wsOutput.Cells(item, "D").Interior.Color = orangeColor
-                        End If
-                    Next item
+                If direction = "IN" Then
+                    If Not origInRows.Exists(origAmount) Then Set origInRows(origAmount) = New Collection
+                    origInRows(origAmount).Add Array(rowNum, accountCode)
+                ElseIf direction = "OUT" Then
+                    If Not origOutRows.Exists(origAmount) Then Set origOutRows(origAmount) = New Collection
+                    origOutRows(origAmount).Add Array(rowNum, accountCode)
                 End If
             End If
-        Next key
+        Next rowNum
         
-        ' 3. Ordenar la tabla al final por el valor absoluto del importe final en USD (Columna D)
-        With wsOutput.Range("H2:H" & lastDataRow)
-            .FormulaR1C1 = "=ABS(RC[-4])"
-            .Value = .Value
-        End With
-        
+        For Each amountKey In origOutRows.Keys
+            If origInRows.Exists(amountKey) Then
+                For Each outData In origOutRows(amountKey)
+                    If Not alreadyMatched.Exists(outData(0)) Then
+                        For Each inData In origInRows(amountKey)
+                            If Not alreadyMatched.Exists(inData(0)) And inData(1) <> outData(1) Then
+                                wsOutput.Cells(inData(0), "D").Value = Abs(wsOutput.Cells(outData(0), "D").Value)
+                                wsOutput.Cells(inData(0), "B").Value = wsOutput.Cells(outData(0), "B").Value
+                                wsOutput.Cells(inData(0), "A").Value = wsOutput.Cells(outData(0), "A").Value
+                                
+                                wsOutput.Cells(outData(0), "D").Interior.Color = orangeColor
+                                wsOutput.Cells(inData(0), "D").Interior.Color = orangeColor
+
+                                wsOutput.Cells(outData(0), "K").Value = pairIDCounter
+                                wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+                                pairIDCounter = pairIDCounter + 1
+                                
+                                alreadyMatched.Add outData(0), True
+                                alreadyMatched.Add inData(0), True
+                                Exit For
+                            End If
+                        Next inData
+                    End If
+                Next outData
+            End If
+        Next amountKey
+
+        ' --- 3. ORDENACIÓN FINAL (CON ID DE PAR) ---
         With wsOutput.Sort
             .SortFields.Clear
-            .SortFields.Add2 key:=wsOutput.Range("H2:H" & lastDataRow), SortOn:=xlSortOnValues, Order:=xlAscending
-            .SetRange wsOutput.Range("A1:I" & lastDataRow)
-            .Header = xlYes: .MatchCase = False: .Orientation = xlTopToBottom: .SortMethod = xlPinYin: .Apply
+            ' Criterio 1: Fecha
+            .SortFields.Add2 key:=wsOutput.Range("B2:B" & lastDataRow), SortOn:=xlSortOnValues, Order:=xlAscending
+            ' Criterio 2: ID de Par (para agrupar pares)
+            .SortFields.Add2 key:=wsOutput.Range("K2:K" & lastDataRow), SortOn:=xlSortOnValues, Order:=xlAscending
+            ' Criterio 3: Importe (para poner negativos primero dentro del par)
+            .SortFields.Add2 key:=wsOutput.Range("D2:D" & lastDataRow), SortOn:=xlSortOnValues, Order:=xlAscending
+            
+            .SetRange wsOutput.Range("A1:K" & lastDataRow)
+            .Header = xlYes
+            .MatchCase = False
+            .Orientation = xlTopToBottom
+            .SortMethod = xlPinYin
+            .Apply
         End With
-
-        ' 4. Eliminar las columnas auxiliares H e I
-        wsOutput.Columns("H:I").Delete
     End If
     
-    ' 5. Ajustar el ancho de las columnas
     wsOutput.Columns("A:G").AutoFit
 
-    MsgBox "Proceso de transformación completado con éxito.", vbInformation
-
+    ' --- LLAMADA A LA SUBRUTINA PARA CREAR EL REPORTE FINAL ---
+    Call CrearReporteFinal(wsOutput)
+    
 Cleanup:
     Application.ScreenUpdating = True
     Application.Calculation = xlCalculationAutomatic
 End Sub
 
+' =========================================================================================
+' SUBRUTINA PARA CREAR EL ARCHIVO DE REPORTE FINAL
+' =========================================================================================
+Private Sub CrearReporteFinal(ByVal wsSource As Worksheet)
+    Dim wbNew As Workbook
+    Dim wsNew As Worksheet, wsReview As Worksheet
+    Dim lastRow As Long, rowNum As Long
+    Dim orangeColor As Long, greenColor As Long
+    Dim sheetName As String
+    Dim processedRows As Object
+    Dim savePath As Variant
+
+    If wsSource Is Nothing Then Exit Sub
+    lastRow = wsSource.Cells(wsSource.Rows.Count, "A").End(xlUp).row
+    If lastRow < 2 Then Exit Sub
+
+    Set wbNew = Workbooks.Add
+    Set wsReview = wbNew.Worksheets(1)
+    wsReview.Name = "To be reviewed"
+    wsSource.Rows(1).Copy Destination:=wsReview.Rows(1)
+    
+    Set processedRows = CreateObject("Scripting.Dictionary")
+    orangeColor = RGB(255, 219, 198)
+    greenColor = RGB(198, 239, 206)
+
+    For rowNum = 2 To lastRow
+        If processedRows.Exists(rowNum) Then GoTo NextIteration
+
+        Dim cellColor As Long: cellColor = wsSource.Cells(rowNum, "D").Interior.Color
+        
+        If (cellColor = orangeColor Or cellColor = greenColor) And wsSource.Cells(rowNum, "D").Value < 0 Then
+            
+            Dim partnerRowNum As Long: partnerRowNum = rowNum + 1
+            sheetName = Left(wsSource.Cells(rowNum, "C").Value, 31)
+            
+            If Not SheetExists(wbNew, sheetName) Then
+                Set wsNew = wbNew.Worksheets.Add(After:=wbNew.Worksheets(wbNew.Worksheets.Count))
+                wsNew.Name = sheetName
+                wsSource.Rows(1).Copy Destination:=wsNew.Rows(1)
+            Else
+                Set wsNew = wbNew.Worksheets(sheetName)
+            End If
+            
+            Dim nextDestRow As Long
+            nextDestRow = wsNew.Cells(wsNew.Rows.Count, "A").End(xlUp).row + 1
+            wsSource.Rows(rowNum).Copy Destination:=wsNew.Rows(nextDestRow)
+            wsSource.Rows(partnerRowNum).Copy Destination:=wsNew.Rows(nextDestRow + 1)
+            
+            processedRows.Add rowNum, True
+            processedRows.Add partnerRowNum, True
+        End If
+NextIteration:
+    Next rowNum
+    
+    Dim nextReviewRow As Long
+    nextReviewRow = wsReview.Cells(wsReview.Rows.Count, "A").End(xlUp).row + 1
+    
+    For rowNum = 2 To lastRow
+        If Not processedRows.Exists(rowNum) Then
+            wsSource.Rows(rowNum).Copy Destination:=wsReview.Rows(nextReviewRow)
+            nextReviewRow = nextReviewRow + 1
+        End If
+    Next rowNum
+    
+    For Each wsNew In wbNew.Worksheets
+        wsNew.Columns("H:K").Delete
+        wsNew.Columns("A:G").AutoFit
+    Next wsNew
+    
+    Application.DisplayAlerts = False
+    savePath = Application.GetSaveAsFilename(InitialFileName:="Reporte de Transferencias Cruzadas.xlsx", FileFilter:="Excel Files (*.xlsx), *.xlsx")
+    If savePath <> False Then
+        wbNew.SaveAs Filename:=savePath
+        MsgBox "Proceso de transformación y reporte completado con éxito." & vbCrLf & "El nuevo archivo ha sido guardado en: " & savePath, vbInformation
+    Else
+        MsgBox "Proceso de transformación completado, pero el archivo de reporte no fue guardado.", vbExclamation
+    End If
+    Application.DisplayAlerts = True
+    
+End Sub
 
 ' =========================================================================================
-' FUNCIÓN AUXILIAR PARA CONVERTIR TEXTO A NÚMERO DE FORMA ROBUSTA
+' FUNCIÓN AUXILIAR PARA VERIFICAR SI UNA HOJA EXISTE
+' =========================================================================================
+Private Function SheetExists(wb As Workbook, sheetName As String) As Boolean
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = wb.Sheets(sheetName)
+    If Not ws Is Nothing Then SheetExists = True Else SheetExists = False
+    On Error GoTo 0
+End Function
+
+' =========================================================================================
+' FUNCIÓN AUXILIAR PARA CONVERTIR TEXTO A NÚMERO
 ' =========================================================================================
 Private Function ConvertirADouble(ByVal numberString As String) As Double
     On Error GoTo ErrorHandler
