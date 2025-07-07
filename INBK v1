@@ -320,7 +320,7 @@ Sub TransformarDatosInbk()
         
     End If
     
-    wsOutput.Columns.AutoFit
+    wsOutput.Columns("A:G").AutoFit
 
     ' --- LLAMADA A LA SUBRUTINA PARA CREAR EL REPORTE FINAL ---
     Call CrearReporteFinal(wsOutput)
@@ -404,6 +404,7 @@ NextIteration:
     
     For Each wsNew In wbNew.Worksheets
         wsNew.Columns("H:L").Delete
+        ' --- MODIFICACIÓN AQUÍ: Se aplica AutoFit a todas las columnas ---
         wsNew.Columns.AutoFit
     Next wsNew
     
