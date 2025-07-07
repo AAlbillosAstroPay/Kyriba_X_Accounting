@@ -15,12 +15,12 @@ Sub TransformarDatosInbk()
     Dim txnDate As Date
     Dim lookupCode As String, legalEntity As String
     
-    Dim flowType As String
+    Dim flowType As String, flowTypeL As String
     Dim accountAmount As Double
     Dim signedAmount As Double
     Dim txnDirection As String
     
-    Dim originalCurrency As String
+    Dim originalCurrency As String, targetCurrency As String
     Dim rate As Double
     Dim rateKey As String
     
@@ -46,22 +46,37 @@ Sub TransformarDatosInbk()
     Set legalEntities = CreateObject("Scripting.Dictionary")
     
     lastRowRates = wsRates.Cells(wsRates.Rows.Count, "A").End(xlUp).row
+    Dim sourceCurrency As String
+    Dim col As Long
+    Dim header As String
+    Dim headerParts() As String
+    
     For j = 2 To lastRowRates
         Dim rateDate As Date: rateDate = CDate(wsRates.Cells(j, "A").Value)
-        Dim gbpRate As Double: gbpRate = ConvertirADouble(wsRates.Cells(j, "B").Text)
-        Dim eurRate As Double: eurRate = ConvertirADouble(wsRates.Cells(j, "C").Text)
-        Dim rateKeyGbp As String: rateKeyGbp = Format(rateDate, "dd/mm/yyyy") & "|GBP"
-        Dim rateKeyEur As String: rateKeyEur = Format(rateDate, "dd/mm/yyyy") & "|EUR"
-        If Not exchangeRates.Exists(rateKeyGbp) Then exchangeRates.Add rateKeyGbp, gbpRate
-        If Not exchangeRates.Exists(rateKeyEur) Then exchangeRates.Add rateKeyEur, eurRate
+        
+        For col = 2 To wsRates.Cells(1, wsRates.Columns.Count).End(xlToLeft).Column
+            header = Trim(wsRates.Cells(1, col).Value)
+            
+            If InStr(header, "/") > 0 Then
+                headerParts = Split(header, "/")
+                sourceCurrency = UCase(Trim(headerParts(0)))
+                Dim rateTargetCurrency As String: rateTargetCurrency = UCase(Trim(headerParts(1)))
+                
+                rate = ConvertirADouble(wsRates.Cells(j, col).Text)
+                rateKey = Format(rateDate, "dd/mm/yyyy") & "|" & sourceCurrency & "|" & rateTargetCurrency
+                
+                If Not exchangeRates.Exists(rateKey) Then
+                    exchangeRates.Add rateKey, rate
+                End If
+            End If
+        Next col
     Next j
     
-    ' --- MODIFICACIÓN AQUÍ: Se ajustan las columnas para la nueva estructura de "Listado de Cuentas" ---
     lastRowAccounts = wsAccounts.Cells(wsAccounts.Rows.Count, "M").End(xlUp).row
     For k = 2 To lastRowAccounts
-        legalEntity = Trim(wsAccounts.Cells(k, "B").Value) 'Columna B para Legal Entity
-        Dim kyribaCode As String: kyribaCode = Trim(wsAccounts.Cells(k, "M").Value) 'Columna M para Kyriba Code
-        Dim qbName As String: qbName = Trim(wsAccounts.Cells(k, "O").Value) 'Columna O para QB Name
+        legalEntity = Trim(wsAccounts.Cells(k, "B").Value)
+        Dim kyribaCode As String: kyribaCode = Trim(wsAccounts.Cells(k, "M").Value)
+        Dim qbName As String: qbName = Trim(wsAccounts.Cells(k, "O").Value)
         If kyribaCode <> "" Then
             If Not accountList.Exists(kyribaCode) Then accountList.Add kyribaCode, qbName
             If Not legalEntities.Exists(kyribaCode) Then legalEntities.Add kyribaCode, legalEntity
@@ -83,18 +98,18 @@ Sub TransformarDatosInbk()
     End With
 
     ' --- PROCESAMIENTO DE DATOS ---
-    lastRowInput = wsInput.Cells(wsInput.Rows.Count, "J").End(xlUp).row
+    lastRowInput = wsInput.Cells(wsInput.Rows.Count, "F").End(xlUp).row
     outputRow = 2
 
     For i = 2 To lastRowInput
-        If InStr(UCase(Trim(wsInput.Cells(i, "J").Value)), "INBK") > 0 Then
+        If InStr(UCase(Trim(wsInput.Cells(i, "F").Value)), "INBK") > 0 Then
             
-            txnDate = CDate(wsInput.Cells(i, "D").Value)
+            txnDate = CDate(wsInput.Cells(i, "H").Value)
             wsOutput.Cells(outputRow, "B").Value = txnDate
             wsOutput.Cells(outputRow, "B").NumberFormat = "dd/mm/yyyy"
             wsOutput.Cells(outputRow, "A").Value = Day(txnDate)
 
-            lookupCode = Trim(wsInput.Cells(i, "A").Value)
+            lookupCode = Trim(wsInput.Cells(i, "D").Value)
             If accountList.Exists(lookupCode) Then
                 wsOutput.Cells(outputRow, "C").Value = accountList(lookupCode)
                 If legalEntities.Exists(lookupCode) Then
@@ -107,53 +122,60 @@ Sub TransformarDatosInbk()
                 wsOutput.Cells(outputRow, "L").Value = "Entidad no encontrada"
             End If
             
-            flowType = Trim(wsInput.Cells(i, "B").Value)
-            accountAmount = ConvertirADouble(wsInput.Cells(i, "H").Text)
+            flowType = Trim(wsInput.Cells(i, "K").Value)
+            flowTypeL = Trim(wsInput.Cells(i, "L").Text)
+            accountAmount = ConvertirADouble(flowTypeL)
             
-            If Left(flowType, 1) = "-" Then
-                signedAmount = -Abs(accountAmount)
-                txnDirection = "OUT"
-            ElseIf Left(flowType, 1) = "+" Then
-                If accountAmount >= 0 Then
-                    signedAmount = Abs(accountAmount)
-                    txnDirection = "IN"
-                Else
-                    signedAmount = -Abs(accountAmount)
-                    txnDirection = "OUT"
-                End If
-            Else
-                signedAmount = accountAmount
-                txnDirection = "UNKNOWN"
+            Dim signK As String: signK = Left(flowType, 1)
+            Dim signL As String: signL = Left(flowTypeL, 1)
+            
+            If signL <> "+" And signL <> "-" Then
+                signL = "+"
             End If
-
-            originalCurrency = UCase(Trim(wsInput.Cells(i, "E").Value))
-            If originalCurrency = "USD" Then
+            
+            If signK = "+" And signL = "+" Then
+                txnDirection = "IN"
+                signedAmount = Abs(accountAmount)
+            ElseIf (signK = "-" And signL = "+") Or (signK = "+" And signL = "-") Then
+                txnDirection = "OUT"
+                signedAmount = -Abs(accountAmount)
+            Else
+                txnDirection = "UNKNOWN"
+                signedAmount = accountAmount
+            End If
+            
+            originalCurrency = UCase(Right(flowType, 3))
+            
+            Dim currentLegalEntity As String
+            currentLegalEntity = wsOutput.Cells(outputRow, "L").Value
+            If currentLegalEntity = "LARSTAL DENMARK APS" Or currentLegalEntity = "AP DIGITAL SOLUTIONS (CY) LTD" Or currentLegalEntity = "LARSTAL LIMITED" Then
+                targetCurrency = "EUR"
+            Else
+                targetCurrency = "USD"
+            End If
+            wsOutput.Cells(outputRow, "G").Value = targetCurrency
+            
+            If originalCurrency = targetCurrency Then
                 wsOutput.Cells(outputRow, "D").Value = signedAmount
-            ElseIf originalCurrency = "EUR" Or originalCurrency = "GBP" Then
-                rateKey = Format(txnDate, "dd/mm/yyyy") & "|" & originalCurrency
+            Else
+                rateKey = Format(txnDate, "dd/mm/yyyy") & "|" & originalCurrency & "|" & targetCurrency
+                
                 If exchangeRates.Exists(rateKey) Then
                     rate = exchangeRates(rateKey)
-                    wsOutput.Cells(outputRow, "D").Value = signedAmount * rate
+                    If rate <> 0 Then
+                        wsOutput.Cells(outputRow, "D").Value = signedAmount / rate
+                    Else
+                        wsOutput.Cells(outputRow, "D").Value = 0
+                    End If
                 Else
                     wsOutput.Cells(outputRow, "D").Value = 0
                 End If
-            Else
-                wsOutput.Cells(outputRow, "D").Value = 0
             End If
             
             wsOutput.Cells(outputRow, "D").NumberFormat = "#,##0.00"
             wsOutput.Cells(outputRow, "E").Value = ""
-            wsOutput.Cells(outputRow, "F").Value = wsInput.Cells(i, "K").Value
-            
-            Dim currentLegalEntity As String
-            currentLegalEntity = wsOutput.Cells(outputRow, "L").Value
-            If currentLegalEntity = "LARSTAL DENMARK APS" Or currentLegalEntity = "AP DIGITAL SOLUTIONS (CY) LTD" Then
-                wsOutput.Cells(outputRow, "G").Value = "EUR"
-            Else
-                wsOutput.Cells(outputRow, "G").Value = "USD"
-            End If
-            
-            wsOutput.Cells(outputRow, "H").Value = Abs(ConvertirADouble(wsInput.Cells(i, "F").Text))
+            wsOutput.Cells(outputRow, "F").Value = wsInput.Cells(i, "N").Value
+            wsOutput.Cells(outputRow, "H").Value = Abs(ConvertirADouble(flowTypeL))
             wsOutput.Cells(outputRow, "I").Value = txnDirection
             wsOutput.Cells(outputRow, "J").Value = lookupCode
             
@@ -184,16 +206,18 @@ Sub TransformarDatosInbk()
 
         For rowNum = 2 To lastDataRow
             finalAmount = Abs(wsOutput.Cells(rowNum, "D").Value)
-            direction = wsOutput.Cells(rowNum, "I").Value
-            accountCode = wsOutput.Cells(rowNum, "J").Value
-            legalEntity = wsOutput.Cells(rowNum, "L").Value 
+            If finalAmount > 0 Then
+                direction = wsOutput.Cells(rowNum, "I").Value
+                accountCode = wsOutput.Cells(rowNum, "J").Value
+                legalEntity = wsOutput.Cells(rowNum, "L").Value 
 
-            If direction = "IN" Then
-                If Not exactInRows.Exists(finalAmount) Then Set exactInRows(finalAmount) = New Collection
-                exactInRows(finalAmount).Add Array(rowNum, accountCode, legalEntity)
-            ElseIf direction = "OUT" Then
-                If Not exactOutRows.Exists(finalAmount) Then Set exactOutRows(finalAmount) = New Collection
-                exactOutRows(finalAmount).Add Array(rowNum, accountCode, legalEntity)
+                If direction = "IN" Then
+                    If Not exactInRows.Exists(finalAmount) Then Set exactInRows(finalAmount) = New Collection
+                    exactInRows(finalAmount).Add Array(rowNum, accountCode, legalEntity)
+                ElseIf direction = "OUT" Then
+                    If Not exactOutRows.Exists(finalAmount) Then Set exactOutRows(finalAmount) = New Collection
+                    exactOutRows(finalAmount).Add Array(rowNum, accountCode, legalEntity)
+                End If
             End If
         Next rowNum
 
@@ -231,16 +255,18 @@ Sub TransformarDatosInbk()
         For rowNum = 2 To lastDataRow
             If Not alreadyMatched.Exists(rowNum) Then
                 origAmount = wsOutput.Cells(rowNum, "H").Value
-                direction = wsOutput.Cells(rowNum, "I").Value
-                accountCode = wsOutput.Cells(rowNum, "J").Value
-                legalEntity = wsOutput.Cells(rowNum, "L").Value
-                
-                If direction = "IN" Then
-                    If Not origInRows.Exists(origAmount) Then Set origInRows(origAmount) = New Collection
-                    origInRows(origAmount).Add Array(rowNum, accountCode, legalEntity)
-                ElseIf direction = "OUT" Then
-                    If Not origOutRows.Exists(origAmount) Then Set origOutRows(origAmount) = New Collection
-                    origOutRows(origAmount).Add Array(rowNum, accountCode, legalEntity)
+                If origAmount > 0 Then
+                    direction = wsOutput.Cells(rowNum, "I").Value
+                    accountCode = wsOutput.Cells(rowNum, "J").Value
+                    legalEntity = wsOutput.Cells(rowNum, "L").Value
+                    
+                    If direction = "IN" Then
+                        If Not origInRows.Exists(origAmount) Then Set origInRows(origAmount) = New Collection
+                        origInRows(origAmount).Add Array(rowNum, accountCode, legalEntity)
+                    ElseIf direction = "OUT" Then
+                        If Not origOutRows.Exists(origAmount) Then Set origOutRows(origAmount) = New Collection
+                        origOutRows(origAmount).Add Array(rowNum, accountCode, legalEntity)
+                    End If
                 End If
             End If
         Next rowNum
@@ -294,7 +320,7 @@ Sub TransformarDatosInbk()
         
     End If
     
-    wsOutput.Columns("A:G").AutoFit
+    wsOutput.Columns.AutoFit
 
     ' --- LLAMADA A LA SUBRUTINA PARA CREAR EL REPORTE FINAL ---
     Call CrearReporteFinal(wsOutput)
@@ -339,6 +365,13 @@ Private Sub CrearReporteFinal(ByVal wsSource As Worksheet)
             Dim partnerRowNum As Long: partnerRowNum = rowNum + 1
             sheetName = Left(wsSource.Cells(rowNum, "C").Value, 31)
             
+            Dim invalidChars As Variant
+            Dim charIdx As Long
+            invalidChars = Array(":", "\", "/", "?", "*", "[", "]")
+            For charIdx = LBound(invalidChars) To UBound(invalidChars)
+                sheetName = Replace(sheetName, invalidChars(charIdx), "")
+            Next charIdx
+            
             If Not SheetExists(wbNew, sheetName) Then
                 Set wsNew = wbNew.Worksheets.Add(After:=wbNew.Worksheets(wbNew.Worksheets.Count))
                 wsNew.Name = sheetName
@@ -371,7 +404,7 @@ NextIteration:
     
     For Each wsNew In wbNew.Worksheets
         wsNew.Columns("H:L").Delete
-        wsNew.Columns("A:G").AutoFit
+        wsNew.Columns.AutoFit
     Next wsNew
     
     Application.DisplayAlerts = False
