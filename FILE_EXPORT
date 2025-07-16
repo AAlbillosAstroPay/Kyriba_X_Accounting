@@ -1,0 +1,121 @@
+' =========================================================================================
+' SUBRUTINA PARA CREAR EL ARCHIVO DE REPORTE FINAL POR LEGAL ENTITY
+' =========================================================================================
+Private Sub CrearReporteFinal(ByVal wsSource As Worksheet)
+    Dim uniqueEntities As Object
+    Dim entityKey As Variant
+    Dim wbNew As Workbook
+    Dim wsNew As Worksheet, wsReview As Worksheet
+    Dim lastRow As Long, rowNum As Long
+    Dim orangeColor As Long, greenColor As Long
+    Dim sheetName As String, currentEntity As String
+    Dim processedRows As Object
+    Dim savePath As String
+    
+    If wsSource Is Nothing Then Exit Sub
+    lastRow = wsSource.Cells(wsSource.Rows.Count, "A").End(xlUp).row
+    If lastRow < 2 Then Exit Sub
+    
+    Set uniqueEntities = CreateObject("Scripting.Dictionary")
+    For rowNum = 2 To lastRow
+        currentEntity = wsSource.Cells(rowNum, "L").Value
+        If Not uniqueEntities.Exists(currentEntity) Then
+            uniqueEntities.Add currentEntity, 0
+        End If
+    Next rowNum
+    
+    For Each entityKey In uniqueEntities.Keys
+        currentEntity = CStr(entityKey)
+        
+        Set wbNew = Workbooks.Add
+        Set wsReview = wbNew.Worksheets(1)
+        wsReview.Name = "To be reviewed"
+        wsSource.Rows(1).Copy Destination:=wsReview.Rows(1)
+        
+        Set processedRows = CreateObject("Scripting.Dictionary")
+        orangeColor = RGB(255, 219, 198)
+        greenColor = RGB(198, 239, 206)
+
+        For rowNum = 2 To lastRow
+            If wsSource.Cells(rowNum, "L").Value = currentEntity Then
+                If Not processedRows.Exists(rowNum) Then
+                    Dim cellColor As Long: cellColor = wsSource.Cells(rowNum, "D").Interior.Color
+                    Dim isTrfPair As Boolean: isTrfPair = Left(wsSource.Cells(rowNum, "K").Value, 3) = "TRF"
+                    
+                    If ((cellColor = orangeColor Or cellColor = greenColor) And wsSource.Cells(rowNum, "D").Value > 0) Or isTrfPair Then
+                        Dim partnerRowNum As Long: partnerRowNum = rowNum + 1
+                        sheetName = Left(wsSource.Cells(rowNum, "M").Value, 31)
+                        
+                        Dim invalidChars As Variant, charIdx As Long
+                        invalidChars = Array(":", "\", "/", "?", "*", "[", "]")
+                        For charIdx = LBound(invalidChars) To UBound(invalidChars)
+                            sheetName = Replace(sheetName, invalidChars(charIdx), "")
+                        Next charIdx
+                        
+                        If Not SheetExists(wbNew, sheetName) Then
+                            Set wsNew = wbNew.Worksheets.Add(After:=wbNew.Worksheets(wbNew.Worksheets.Count))
+                            wsNew.Name = sheetName
+                            wsSource.Rows(1).Copy Destination:=wsNew.Rows(1)
+                        Else
+                            Set wsNew = wbNew.Worksheets(sheetName)
+                        End If
+                        
+                        Dim nextDestRow As Long
+                        nextDestRow = wsNew.Cells(wsNew.Rows.Count, "A").End(xlUp).row + 1
+                        wsSource.Rows(rowNum).Copy Destination:=wsNew.Rows(nextDestRow)
+                        wsSource.Rows(partnerRowNum).Copy Destination:=wsNew.Rows(nextDestRow + 1)
+                        
+                        processedRows.Add rowNum, True
+                        processedRows.Add partnerRowNum, True
+                    End If
+                End If
+            End If
+        Next rowNum
+        
+        Dim nextReviewRow As Long
+        nextReviewRow = wsReview.Cells(wsReview.Rows.Count, "A").End(xlUp).row + 1
+        
+        For rowNum = 2 To lastRow
+            If wsSource.Cells(rowNum, "L").Value = currentEntity Then
+                If Not processedRows.Exists(rowNum) Then
+                    wsSource.Rows(rowNum).Copy Destination:=wsReview.Rows(nextReviewRow)
+                    nextReviewRow = nextReviewRow + 1
+                End If
+            End If
+        Next rowNum
+        
+        For Each wsNew In wbNew.Worksheets
+            wsNew.Columns("H:M").Delete
+            wsNew.Columns.AutoFit
+            wsNew.Columns("F").ColumnWidth = 80
+        Next wsNew
+        
+        Application.DisplayAlerts = False
+        savePath = "C:\Users\aalbi\OneDrive\Escritorio\" & currentEntity & ".xlsx"
+        
+        On Error Resume Next
+        wbNew.SaveAs Filename:=savePath
+        If Err.Number <> 0 Then
+             MsgBox "No se pudo guardar el archivo para la entidad: " & currentEntity & "." & vbCrLf & "Asegúrese de que el nombre sea válido y que no esté abierto.", vbCritical
+             Err.Clear
+        End If
+        wbNew.Close SaveChanges:=False
+        On Error GoTo 0
+        
+        Application.DisplayAlerts = True
+    Next entityKey
+    
+    MsgBox "Proceso completado. Se han generado " & uniqueEntities.Count & " archivos en el escritorio.", vbInformation
+
+End Sub
+
+' =========================================================================================
+' FUNCIÓN AUXILIAR PARA VERIFICAR SI UNA HOJA EXISTE
+' =========================================================================================
+Private Function SheetExists(wb As Workbook, sheetName As String) As Boolean
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = wb.Sheets(sheetName)
+    If Not ws Is Nothing Then SheetExists = True Else SheetExists = False
+    On Error GoTo 0
+End Function
