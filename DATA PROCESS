@@ -5,9 +5,9 @@ Sub TransformarDatosInbk()
 
     ' --- DECLARACIÓN DE TODAS LAS VARIABLES ---
     Dim wb As Workbook
-    Dim wsInput As Worksheet, wsOutput As Worksheet, wsAccounts As Worksheet
+    Dim wsInput As Worksheet, wsOutput As Worksheet, wsAccounts As Worksheet, wsInterCo As Worksheet
     Dim wsUnmatchedINBK As Worksheet, wsUnmatchedEXPT As Worksheet
-    Dim lastRowInput As Long, lastRowAccounts As Long, lastDataRow As Long
+    Dim lastRowInput As Long, lastRowAccounts As Long, lastDataRow As Long, lastRowInterCo As Long
     Dim outputRow As Long, rowNum As Long, originalRow As Long, j As Long
     Dim i As Long, k As Long, c As Long, pairIDCounter As Long
     
@@ -15,22 +15,23 @@ Sub TransformarDatosInbk()
     Dim copiedINBKRows As Object, copiedEXPTRows As Object, alreadyMatched As Object
     Dim exactIn_INBK As Object, exactOut_INBK As Object, origIn_INBK As Object, origOut_INBK As Object
     Dim exactIn_EXPT As Object, exactOut_EXPT As Object, origIn_EXPT As Object, origOut_EXPT As Object
+    Dim exptMatchedPairs As Collection
     
     Dim txnDate As Date, bitsoDate As Date, targetDate As Date, incomingDate As Date
     Dim lookupCode As String, legalEntity As String, kyribaCode As String, qbName As String, bankChargeName As String, bankName As String
     Dim flowType As String, flowTypeL As String, transactionType As String, txnDirection As String, txnType As String
     Dim signK As String, signL As String, signFromI As String, direction As String, accountCode As String
-    Dim currentLegalEntity As String, bitsoLegalEntity As String, referenceText As String, outLegalEntity As String
+    Dim currentLegalEntity As String, bitsoLegalEntity As String, referenceText As String, outLegalEntity As String, inLegalEntity As String
     
     Dim finalAmountFromJ As Double, signedAmount As Double, amountFromJ As Double, finalAmount As Double
     Dim currentFinalAmount As Double, currentOrigAmount As Double, bitsoOrigAmount As Double, incomingAmount As Double
     Dim currentFinalAmount_EXPT As Double, currentOrigAmount_EXPT As Double
     Dim lowerBound As Double, upperBound As Double, outAmount As Double, originalOutAmount As Double
     
-    Dim greenColor As Long, orangeColor As Long, blueColor As Long, yellowColor As Long, normalBlueColor As Long
+    Dim greenColor As Long, lightGreenColor As Long, lightBlueColor As Long, normalBlueColor As Long, yellowColor As Long
     Dim nextUnmatchedINBKRow As Long, nextUnmatchedEXPTRow As Long
     
-    Dim amountKey As Variant, outData As Variant, inData As Variant
+    Dim amountKey As Variant, outData As Variant, inData As Variant, intercompanyList As Variant, pair As Variant
     
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -40,10 +41,12 @@ Sub TransformarDatosInbk()
     On Error Resume Next
     Set wsInput = wb.Sheets("Hoja 1")
     Set wsAccounts = wb.Sheets("Listado de Cuentas")
+    Set wsInterCo = wb.Sheets("Listado Intercompany")
     On Error GoTo 0
     
     If wsInput Is Nothing Then MsgBox "Error: No se encontró la hoja 'Hoja 1'.", vbCritical: GoTo Cleanup
     If wsAccounts Is Nothing Then MsgBox "Error: No se encontró la hoja 'Listado de Cuentas'.", vbCritical: GoTo Cleanup
+    If wsInterCo Is Nothing Then MsgBox "Error: No se encontró la hoja 'Listado Intercompany'.", vbCritical: GoTo Cleanup
 
     ' --- CARGA DE DATOS DE BÚSQUEDA ---
     Application.StatusBar = "Cargando datos de 'Listado de Cuentas'..."
@@ -68,6 +71,11 @@ Sub TransformarDatosInbk()
         End If
     Next k
 
+    lastRowInterCo = wsInterCo.Cells(wsInterCo.Rows.Count, "A").End(xlUp).Row
+    If lastRowInterCo > 1 Then
+        intercompanyList = wsInterCo.Range("A2:D" & lastRowInterCo).Value
+    End If
+
     ' --- PREPARACIÓN DE LA HOJA DE SALIDA "Tabla Transformada" ---
     Application.StatusBar = "Preparando hoja de salida..."
     Application.DisplayAlerts = False
@@ -88,104 +96,102 @@ Sub TransformarDatosInbk()
     outputRow = 2
 
     For i = 2 To lastRowInput
-        Application.StatusBar = "Paso 1 de 7: Procesando fila " & i & " de " & lastRowInput & "..."
+        Application.StatusBar = "Paso 1 de 8: Procesando fila " & i & " de " & lastRowInput & "..."
         If i Mod 1000 = 0 Then DoEvents
         
         transactionType = UCase(Trim(wsInput.Cells(i, "F").Value))
         
-        If InStr(transactionType, "INBK") > 0 Or InStr(transactionType, "EXPT") > 0 Or InStr(transactionType, "TRFF") > 0 Or InStr(transactionType, "MNTF") > 0 Then
-            If InStr(transactionType, "INBK") > 0 Or InStr(transactionType, "EXPT") > 0 Then
-                txnDate = CDate(wsInput.Cells(i, "H").Value)
-                wsOutput.Cells(outputRow, "B").Value = txnDate
-                wsOutput.Cells(outputRow, "B").NumberFormat = "dd/mm/yyyy"
-                wsOutput.Cells(outputRow, "A").Value = Day(txnDate)
-                lookupCode = Trim(wsInput.Cells(i, "D").Value)
-                If accountList.Exists(lookupCode) Then
-                    wsOutput.Cells(outputRow, "C").Value = accountList(lookupCode)
-                    If legalEntities.Exists(lookupCode) Then wsOutput.Cells(outputRow, "L").Value = legalEntities(lookupCode)
-                Else
-                    wsOutput.Cells(outputRow, "C").Value = "Cuenta no encontrada"
-                    wsOutput.Cells(outputRow, "L").Value = "Entidad no encontrada"
-                End If
-                flowType = Trim(wsInput.Cells(i, "K").Value)
-                flowTypeL = Trim(wsInput.Cells(i, "L").Text)
-                finalAmountFromJ = ConvertirADouble(wsInput.Cells(i, "J").Text)
-                signK = Left(flowType, 1)
-                signL = Left(flowTypeL, 1)
-                If signL <> "+" And signL <> "-" Then signL = "+"
-                If signK = "+" And signL = "+" Then
-                    txnDirection = "IN"
-                    signedAmount = Abs(finalAmountFromJ)
-                ElseIf (signK = "-" And signL = "+") Or (signK = "+" And signL = "-") Then
-                    txnDirection = "OUT"
-                    signedAmount = -Abs(finalAmountFromJ)
-                Else
-                    txnDirection = "UNKNOWN"
-                    signedAmount = finalAmountFromJ
-                End If
-                wsOutput.Cells(outputRow, "D").Value = signedAmount
-                currentLegalEntity = wsOutput.Cells(outputRow, "L").Value
-                If currentLegalEntity = "LARSTAL DENMARK APS" Or currentLegalEntity = "AP DIGITAL SOLUTIONS (CY) LTD" Or currentLegalEntity = "LARSTAL LIMITED" Then
-                    wsOutput.Cells(outputRow, "G").Value = "EUR"
-                Else
-                    wsOutput.Cells(outputRow, "G").Value = "USD"
-                End If
-                wsOutput.Cells(outputRow, "D").NumberFormat = "#,##0.00"
-                wsOutput.Cells(outputRow, "E").Value = ""
-                wsOutput.Cells(outputRow, "F").Value = wsInput.Cells(i, "N").Value
-                wsOutput.Cells(outputRow, "H").Value = Abs(ConvertirADouble(flowTypeL))
-                wsOutput.Cells(outputRow, "I").Value = txnDirection
-                wsOutput.Cells(outputRow, "J").Value = lookupCode
-                
-                If InStr(transactionType, "INBK") > 0 Then
-                     wsOutput.Cells(outputRow, "M").Value = "INBK"
-                Else
-                     wsOutput.Cells(outputRow, "M").Value = "EXPT"
-                End If
-                
-                wsOutput.Cells(outputRow, "N").Value = i
-                
-                outputRow = outputRow + 1
-            
-            ElseIf InStr(transactionType, "TRFF") > 0 Or InStr(transactionType, "MNTF") > 0 Then
-                txnDate = CDate(wsInput.Cells(i, "H").Value)
-                wsOutput.Cells(outputRow, "B").Value = txnDate
-                wsOutput.Cells(outputRow, "B").NumberFormat = "dd/mm/yyyy"
-                wsOutput.Cells(outputRow, "A").Value = Day(txnDate)
-                lookupCode = Trim(wsInput.Cells(i, "D").Value)
-                If accountList.Exists(lookupCode) Then
-                    wsOutput.Cells(outputRow, "C").Value = accountList(lookupCode)
-                    If legalEntities.Exists(lookupCode) Then wsOutput.Cells(outputRow, "L").Value = legalEntities(lookupCode)
-                Else
-                    wsOutput.Cells(outputRow, "C").Value = "Cuenta no encontrada"
-                    wsOutput.Cells(outputRow, "L").Value = "Entidad no encontrada"
-                End If
-                amountFromJ = ConvertirADouble(wsInput.Cells(i, "J").Text)
-                signFromI = Left(Trim(wsInput.Cells(i, "I").Text), 1)
-                If signFromI = "-" Then finalAmount = amountFromJ * -1 Else finalAmount = amountFromJ
-                wsOutput.Cells(outputRow, "D").Value = finalAmount
-                wsOutput.Cells(outputRow, "D").NumberFormat = "#,##0.00"
-                wsOutput.Cells(outputRow, "E").Value = ""
-                wsOutput.Cells(outputRow, "F").Value = wsInput.Cells(i, "N").Value
-                If wsOutput.Cells(outputRow, "L").Value = "LARSTAL DENMARK APS" Or wsOutput.Cells(outputRow, "L").Value = "AP DIGITAL SOLUTIONS (CY) LTD" Or wsOutput.Cells(outputRow, "L").Value = "LARSTAL LIMITED" Then
-                    wsOutput.Cells(outputRow, "G").Value = "EUR"
-                Else
-                    wsOutput.Cells(outputRow, "G").Value = "USD"
-                End If
-                wsOutput.Cells(outputRow, "I").Value = "OUT"
-                wsOutput.Cells(outputRow, "J").Value = lookupCode
-                wsOutput.Cells(outputRow, "K").Value = "TRF" & i
-                outputRow = outputRow + 1
-                wsOutput.Rows(outputRow - 1).Copy Destination:=wsOutput.Rows(outputRow)
-                If bankChargesList.Exists(lookupCode) Then
-                    wsOutput.Cells(outputRow, "C").Value = bankChargesList(lookupCode)
-                Else
-                    wsOutput.Cells(outputRow, "C").Value = "Cargo no encontrado"
-                End If
-                wsOutput.Cells(outputRow, "D").Value = finalAmount * -1
-                wsOutput.Cells(outputRow, "I").Value = "IN"
-                outputRow = outputRow + 1
+        If InStr(transactionType, "INBK") > 0 Or InStr(transactionType, "EXPT") > 0 Then
+            txnDate = CDate(wsInput.Cells(i, "H").Value)
+            wsOutput.Cells(outputRow, "B").Value = txnDate
+            wsOutput.Cells(outputRow, "B").NumberFormat = "dd/mm/yyyy"
+            wsOutput.Cells(outputRow, "A").Value = Day(txnDate)
+            lookupCode = Trim(wsInput.Cells(i, "D").Value)
+            If accountList.Exists(lookupCode) Then
+                wsOutput.Cells(outputRow, "C").Value = accountList(lookupCode)
+                If legalEntities.Exists(lookupCode) Then wsOutput.Cells(outputRow, "L").Value = legalEntities(lookupCode)
+            Else
+                wsOutput.Cells(outputRow, "C").Value = "Cuenta no encontrada"
+                wsOutput.Cells(outputRow, "L").Value = "Entidad no encontrada"
             End If
+            flowType = Trim(wsInput.Cells(i, "K").Value)
+            flowTypeL = Trim(wsInput.Cells(i, "L").Text)
+            finalAmountFromJ = ConvertirADouble(wsInput.Cells(i, "J").Text)
+            signK = Left(flowType, 1)
+            signL = Left(flowTypeL, 1)
+            If signL <> "+" And signL <> "-" Then signL = "+"
+            If signK = "+" And signL = "+" Then
+                txnDirection = "IN"
+                signedAmount = Abs(finalAmountFromJ)
+            ElseIf (signK = "-" And signL = "+") Or (signK = "+" And signL = "-") Then
+                txnDirection = "OUT"
+                signedAmount = -Abs(finalAmountFromJ)
+            Else
+                txnDirection = "UNKNOWN"
+                signedAmount = finalAmountFromJ
+            End If
+            wsOutput.Cells(outputRow, "D").Value = signedAmount
+            currentLegalEntity = wsOutput.Cells(outputRow, "L").Value
+            If currentLegalEntity = "LARSTAL DENMARK APS" Or currentLegalEntity = "AP DIGITAL SOLUTIONS (CY) LTD" Or currentLegalEntity = "LARSTAL LIMITED" Then
+                wsOutput.Cells(outputRow, "G").Value = "EUR"
+            Else
+                wsOutput.Cells(outputRow, "G").Value = "USD"
+            End If
+            wsOutput.Cells(outputRow, "D").NumberFormat = "#,##0.00"
+            wsOutput.Cells(outputRow, "E").Value = ""
+            wsOutput.Cells(outputRow, "F").Value = wsInput.Cells(i, "N").Value
+            wsOutput.Cells(outputRow, "H").Value = Abs(ConvertirADouble(flowTypeL))
+            wsOutput.Cells(outputRow, "I").Value = txnDirection
+            wsOutput.Cells(outputRow, "J").Value = lookupCode
+            
+            If InStr(transactionType, "INBK") > 0 Then
+                 wsOutput.Cells(outputRow, "M").Value = "INBK"
+            Else
+                 wsOutput.Cells(outputRow, "M").Value = "EXPT"
+            End If
+            
+            wsOutput.Cells(outputRow, "N").Value = i
+            
+            outputRow = outputRow + 1
+        
+        ElseIf InStr(transactionType, "TRFF") > 0 Or InStr(transactionType, "MNTF") > 0 Then
+            txnDate = CDate(wsInput.Cells(i, "H").Value)
+            wsOutput.Cells(outputRow, "B").Value = txnDate
+            wsOutput.Cells(outputRow, "B").NumberFormat = "dd/mm/yyyy"
+            wsOutput.Cells(outputRow, "A").Value = Day(txnDate)
+            lookupCode = Trim(wsInput.Cells(i, "D").Value)
+            If accountList.Exists(lookupCode) Then
+                wsOutput.Cells(outputRow, "C").Value = accountList(lookupCode)
+                If legalEntities.Exists(lookupCode) Then wsOutput.Cells(outputRow, "L").Value = legalEntities(lookupCode)
+            Else
+                wsOutput.Cells(outputRow, "C").Value = "Cuenta no encontrada"
+                wsOutput.Cells(outputRow, "L").Value = "Entidad no encontrada"
+            End If
+            amountFromJ = ConvertirADouble(wsInput.Cells(i, "J").Text)
+            signFromI = Left(Trim(wsInput.Cells(i, "I").Text), 1)
+            If signFromI = "-" Then finalAmount = amountFromJ * -1 Else finalAmount = amountFromJ
+            wsOutput.Cells(outputRow, "D").Value = finalAmount
+            wsOutput.Cells(outputRow, "D").NumberFormat = "#,##0.00"
+            wsOutput.Cells(outputRow, "E").Value = ""
+            wsOutput.Cells(outputRow, "F").Value = wsInput.Cells(i, "N").Value
+            If wsOutput.Cells(outputRow, "L").Value = "LARSTAL DENMARK APS" Or wsOutput.Cells(outputRow, "L").Value = "AP DIGITAL SOLUTIONS (CY) LTD" Or wsOutput.Cells(outputRow, "L").Value = "LARSTAL LIMITED" Then
+                wsOutput.Cells(outputRow, "G").Value = "EUR"
+            Else
+                wsOutput.Cells(outputRow, "G").Value = "USD"
+            End If
+            wsOutput.Cells(outputRow, "I").Value = "OUT"
+            wsOutput.Cells(outputRow, "J").Value = lookupCode
+            wsOutput.Cells(outputRow, "K").Value = "TRF" & i
+            outputRow = outputRow + 1
+            wsOutput.Rows(outputRow - 1).Copy Destination:=wsOutput.Rows(outputRow)
+            If bankChargesList.Exists(lookupCode) Then
+                wsOutput.Cells(outputRow, "C").Value = bankChargesList(lookupCode)
+            Else
+                wsOutput.Cells(outputRow, "C").Value = "Cargo no encontrado"
+            End If
+            wsOutput.Cells(outputRow, "D").Value = finalAmount * -1
+            wsOutput.Cells(outputRow, "I").Value = "IN"
+            outputRow = outputRow + 1
         End If
     Next i
 
@@ -193,15 +199,16 @@ Sub TransformarDatosInbk()
     If outputRow > 2 Then
         lastDataRow = outputRow - 1
         greenColor = RGB(198, 239, 206)
-        orangeColor = RGB(226, 240, 217)
-        blueColor = RGB(173, 216, 230)      ' Azul Claro
-        normalBlueColor = RGB(0, 112, 192)  ' ***** NUEVO: Azul Normal *****
+        lightGreenColor = RGB(226, 240, 217) ' Verde Claro
+        lightBlueColor = RGB(173, 216, 230)
+        normalBlueColor = RGB(0, 112, 192)
         yellowColor = RGB(255, 255, 0)
         pairIDCounter = 1
         
         Set alreadyMatched = CreateObject("Scripting.Dictionary")
+        Set exptMatchedPairs = New Collection
         
-        Application.StatusBar = "Paso 2 de 7: Realizando cruce FFC/DUBACHGG..."
+        Application.StatusBar = "Paso 2 de 8: Realizando cruce FFC/DUBACHGG..."
         For rowNum = 2 To lastDataRow
             If Not alreadyMatched.Exists(rowNum) And wsOutput.Cells(rowNum, "M").Value = "INBK" And wsOutput.Cells(rowNum, "I").Value = "OUT" Then
                 originalRow = wsOutput.Cells(rowNum, "N").Value
@@ -243,7 +250,7 @@ Sub TransformarDatosInbk()
         Set exactIn_EXPT = CreateObject("Scripting.Dictionary"): Set exactOut_EXPT = CreateObject("Scripting.Dictionary")
         Set origIn_EXPT = CreateObject("Scripting.Dictionary"): Set origOut_EXPT = CreateObject("Scripting.Dictionary")
 
-        Application.StatusBar = "Paso 3 de 7: Clasificando transacciones para cruce..."
+        Application.StatusBar = "Paso 3 de 8: Clasificando transacciones para cruce..."
         For rowNum = 2 To lastDataRow
             If Not alreadyMatched.Exists(rowNum) Then
                 direction = wsOutput.Cells(rowNum, "I").Value
@@ -296,7 +303,7 @@ Sub TransformarDatosInbk()
             End If
         Next rowNum
 
-        Application.StatusBar = "Paso 4 de 7: Realizando cruces estándar..."
+        Application.StatusBar = "Paso 4 de 8: Realizando cruces estándar..."
         DoEvents
         
         For Each amountKey In exactOut_INBK.Keys
@@ -329,7 +336,7 @@ Sub TransformarDatosInbk()
                                 wsOutput.Cells(inData(0), "D").Value = Abs(wsOutput.Cells(outData(0), "D").Value)
                                 wsOutput.Cells(inData(0), "B").Value = wsOutput.Cells(outData(0), "B").Value
                                 wsOutput.Cells(inData(0), "A").Value = wsOutput.Cells(outData(0), "A").Value
-                                wsOutput.Cells(outData(0), "D").Interior.Color = orangeColor: wsOutput.Cells(inData(0), "D").Interior.Color = orangeColor
+                                wsOutput.Cells(outData(0), "D").Interior.Color = lightGreenColor: wsOutput.Cells(inData(0), "D").Interior.Color = lightGreenColor
                                 wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
                                 pairIDCounter = pairIDCounter + 1
                                 alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
@@ -341,7 +348,7 @@ Sub TransformarDatosInbk()
             End If
         Next amountKey
         
-        Application.StatusBar = "Paso 5 de 7: Realizando cruce especial BITSO FX..."
+        Application.StatusBar = "Paso 5 de 8: Realizando cruce especial BITSO FX..."
         For rowNum = 2 To lastDataRow
             If Not alreadyMatched.Exists(rowNum) And wsOutput.Cells(rowNum, "M").Value = "INBK" And wsOutput.Cells(rowNum, "I").Value = "OUT" Then
                 accountCode = wsOutput.Cells(rowNum, "J").Value
@@ -362,35 +369,16 @@ Sub TransformarDatosInbk()
                                         If Left(UCase(wsOutput.Cells(j, "F").Value), 6) = "BRIDGE" Then
                                             incomingAmount = Abs(wsOutput.Cells(j, "D").Value)
                                             If incomingAmount >= lowerBound And incomingAmount <= upperBound Then
-                                                originalOutAmount = Abs(wsOutput.Cells(rowNum, "D").Value)
-                                                Dim incomingAccountCode As String: incomingAccountCode = wsOutput.Cells(j, "J").Value
-                                                
-                                                wsOutput.Cells(rowNum, "D").Interior.Color = orangeColor
-                                                wsOutput.Cells(rowNum, "K").Value = pairIDCounter
-                                                
-                                                wsOutput.Cells(j, "D").Value = originalOutAmount * 0.9985
+                                                wsOutput.Cells(j, "D").Value = Abs(wsOutput.Cells(rowNum, "D").Value)
                                                 wsOutput.Cells(j, "B").Value = wsOutput.Cells(rowNum, "B").Value
                                                 wsOutput.Cells(j, "A").Value = wsOutput.Cells(rowNum, "A").Value
-                                                wsOutput.Cells(j, "D").Interior.Color = orangeColor
+                                                wsOutput.Cells(rowNum, "D").Interior.Color = lightGreenColor
+                                                wsOutput.Cells(j, "D").Interior.Color = lightGreenColor
+                                                wsOutput.Cells(rowNum, "K").Value = pairIDCounter
                                                 wsOutput.Cells(j, "K").Value = pairIDCounter
-                                                
-                                                wsOutput.Rows(j).Copy wsOutput.Rows(outputRow)
-                                                wsOutput.Cells(outputRow, "D").Value = originalOutAmount * 0.0015
-                                                
-                                                If bankChargesList.Exists(incomingAccountCode) Then
-                                                    wsOutput.Cells(outputRow, "C").Value = bankChargesList(incomingAccountCode)
-                                                Else
-                                                    wsOutput.Cells(outputRow, "C").Value = "Cargo no encontrado"
-                                                End If
-                                                
-                                                wsOutput.Cells(outputRow, "F").Value = "Transaction fee_" & wsOutput.Cells(outputRow, "F").Value
-                                                
-                                                outputRow = outputRow + 1
-                                                
+                                                pairIDCounter = pairIDCounter + 1
                                                 alreadyMatched.Add rowNum, True
                                                 alreadyMatched.Add j, True
-                                                
-                                                pairIDCounter = pairIDCounter + 1
                                                 Exit For
                                             End If
                                         End If
@@ -403,7 +391,7 @@ Sub TransformarDatosInbk()
             End If
         Next rowNum
 
-        Application.StatusBar = "Paso 6 de 7: Realizando cruces EXPT..."
+        Application.StatusBar = "Paso 6 de 8: Realizando cruces EXPT..."
         For Each amountKey In exactOut_EXPT.Keys
             If exactIn_EXPT.Exists(amountKey) Then
                 For Each outData In exactOut_EXPT(amountKey)
@@ -413,10 +401,12 @@ Sub TransformarDatosInbk()
                                 wsOutput.Cells(inData(0), "D").Value = Abs(wsOutput.Cells(outData(0), "D").Value)
                                 wsOutput.Cells(inData(0), "B").Value = wsOutput.Cells(outData(0), "B").Value
                                 wsOutput.Cells(inData(0), "A").Value = wsOutput.Cells(outData(0), "A").Value
-                                wsOutput.Cells(outData(0), "D").Interior.Color = blueColor: wsOutput.Cells(inData(0), "D").Interior.Color = blueColor
+                                wsOutput.Cells(outData(0), "D").Interior.Color = lightBlueColor: wsOutput.Cells(inData(0), "D").Interior.Color = lightBlueColor
                                 wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
-                                pairIDCounter = pairIDCounter + 1
+                                
                                 alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
+                                exptMatchedPairs.Add Array(outData(0), inData(0))
+                                pairIDCounter = pairIDCounter + 1
                                 Exit For
                             End If
                         Next inData
@@ -434,11 +424,12 @@ Sub TransformarDatosInbk()
                                 wsOutput.Cells(inData(0), "D").Value = Abs(wsOutput.Cells(outData(0), "D").Value)
                                 wsOutput.Cells(inData(0), "B").Value = wsOutput.Cells(outData(0), "B").Value
                                 wsOutput.Cells(inData(0), "A").Value = wsOutput.Cells(outData(0), "A").Value
-                                ' ***** MODIFICACIÓN: El color morado ahora es azul normal *****
                                 wsOutput.Cells(outData(0), "D").Interior.Color = normalBlueColor: wsOutput.Cells(inData(0), "D").Interior.Color = normalBlueColor
                                 wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
-                                pairIDCounter = pairIDCounter + 1
+                                
                                 alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
+                                exptMatchedPairs.Add Array(outData(0), inData(0))
+                                pairIDCounter = pairIDCounter + 1
                                 Exit For
                             End If
                         Next inData
@@ -446,8 +437,40 @@ Sub TransformarDatosInbk()
                 Next outData
             End If
         Next amountKey
+        
+        Application.StatusBar = "Paso 7 de 8: Creando asientos intercompañía EXPT..."
+        If exptMatchedPairs.Count > 0 Then
+            For Each pair In exptMatchedPairs
+                Dim outRow As Long: outRow = pair(0)
+                Dim inRow As Long: inRow = pair(1)
+                Dim pairColor As Long: pairColor = wsOutput.Cells(outRow, "D").Interior.Color
+                
+                outLegalEntity = wsOutput.Cells(outRow, "L").Value
+                inLegalEntity = wsOutput.Cells(inRow, "L").Value
+                
+                Dim accountName As String
+                
+                ' Crear contrapartida para la línea de SALIDA (OUT)
+                accountName = GetIntercompanyAccount(outLegalEntity, inLegalEntity, outLegalEntity, intercompanyList)
+                wsOutput.Rows(outRow).Copy wsOutput.Rows(outputRow)
+                wsOutput.Cells(outputRow, "C").Value = accountName
+                wsOutput.Cells(outputRow, "D").Value = wsOutput.Cells(outputRow, "D").Value * -1
+                wsOutput.Cells(outputRow, "I").Value = "IN"
+                wsOutput.Cells(outputRow, "D").Interior.Color = pairColor
+                outputRow = outputRow + 1
+                
+                ' Crear contrapartida para la línea de ENTRADA (IN)
+                accountName = GetIntercompanyAccount(outLegalEntity, inLegalEntity, inLegalEntity, intercompanyList)
+                wsOutput.Rows(inRow).Copy wsOutput.Rows(outputRow)
+                wsOutput.Cells(outputRow, "C").Value = accountName
+                wsOutput.Cells(outputRow, "D").Value = wsOutput.Cells(outputRow, "D").Value * -1
+                wsOutput.Cells(outputRow, "I").Value = "OUT"
+                wsOutput.Cells(outputRow, "D").Interior.Color = pairColor
+                outputRow = outputRow + 1
+            Next pair
+        End If
 
-        Application.StatusBar = "Paso 7 de 7: Ordenando y finalizando..."
+        Application.StatusBar = "Paso 8 de 8: Ordenando y finalizando..."
         lastDataRow = outputRow - 1
         With wsOutput.Sort
             .SortFields.Clear
@@ -527,8 +550,30 @@ Cleanup:
 End Sub
 
 ' =========================================================================================
-' ATENCIÓN: ESTAS FUNCIONES DEBEN ESTAR EN EL MISMO MÓDULO, DEBAJO DE LA MACRO PRINCIPAL
+' ATENCIÓN: ESTAS FUNCIONES Y SUBRUTINAS DEBEN ESTAR EN EL MISMO MÓDULO
 ' =========================================================================================
+
+Private Function GetIntercompanyAccount(ByVal entity1 As String, ByVal entity2 As String, ByVal targetEntity As String, ByVal interCoList As Variant) As String
+    Dim i As Long
+    GetIntercompanyAccount = "Cuenta Interco no encontrada"
+    If IsEmpty(interCoList) Then Exit Function
+    
+    For i = 1 To UBound(interCoList, 1)
+        Dim leA As String: leA = CStr(interCoList(i, 1))
+        Dim leB As String: leB = CStr(interCoList(i, 2))
+        
+        If (leA = entity1 And leB = entity2) Or (leA = entity2 And leB = entity1) Then
+            If targetEntity = leA Then
+                GetIntercompanyAccount = CStr(interCoList(i, 3))
+                Exit Function
+            ElseIf targetEntity = leB Then
+                GetIntercompanyAccount = CStr(interCoList(i, 4))
+                Exit Function
+            End If
+        End If
+    Next i
+End Function
+
 Private Function SheetExists(wb As Workbook, sheetName As String) As Boolean
     Dim ws As Worksheet
     On Error Resume Next
