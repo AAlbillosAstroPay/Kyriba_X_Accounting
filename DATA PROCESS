@@ -97,7 +97,7 @@ Sub TransformarDatosInbk()
 
     For i = 2 To lastRowInput
         Application.StatusBar = "Paso 1 de 8: Procesando fila " & i & " de " & lastRowInput & "..."
-        If i Mod 1000 = 0 Then DoEvents
+        If i Mod 5000 = 0 Then DoEvents
         
         transactionType = UCase(Trim(wsInput.Cells(i, "F").Value))
         
