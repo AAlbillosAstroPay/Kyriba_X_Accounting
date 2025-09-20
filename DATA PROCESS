@@ -133,7 +133,8 @@ Sub TransformarDatosInbk()
         
         transactionType = UCase(Trim(wsInput.Cells(i, "F").Value))
       
-        If InStr(transactionType, "INBK") > 0 Or InStr(transactionType, "EXPT") > 0 Or InStr(transactionType, "FXE") > 0 Or InStr(transactionType, "PSPI") > 0 Or InStr(transactionType, "PSPO") > 0 Or InStr(transactionType, "SALR") > 0 Or InStr(transactionType, "INTC") > 0 Or InStr(transactionType, "DBTC") > 0 Then
+        '(MODIFICADO) Se añade el tipo RFUS al bloque de procesamiento principal
+        If InStr(transactionType, "INBK") > 0 Or InStr(transactionType, "EXPT") > 0 Or InStr(transactionType, "FXE") > 0 Or InStr(transactionType, "PSPI") > 0 Or InStr(transactionType, "PSPO") > 0 Or InStr(transactionType, "SALR") > 0 Or InStr(transactionType, "INTC") > 0 Or InStr(transactionType, "DBTC") > 0 Or InStr(transactionType, "RFUS") > 0 Then
             txnDate = CDate(wsInput.Cells(i, "H").Value)
             wsOutput.Cells(outputRow, "B").Value = txnDate
             wsOutput.Cells(outputRow, "B").NumberFormat = "dd/mm/yyyy"
@@ -192,6 +193,7 @@ Sub TransformarDatosInbk()
             wsOutput.Cells(outputRow, "I").Value = txnDirection
             wsOutput.Cells(outputRow, "J").Value = lookupCode
             
+            '(MODIFICADO) Se añade etiqueta para RFUS
             If InStr(transactionType, "INBK") > 0 Then
                  wsOutput.Cells(outputRow, "M").Value = "INBK"
             ElseIf InStr(transactionType, "FXE") > 0 Then
@@ -206,6 +208,8 @@ Sub TransformarDatosInbk()
                  wsOutput.Cells(outputRow, "M").Value = "INTC"
             ElseIf InStr(transactionType, "DBTC") > 0 Then
                  wsOutput.Cells(outputRow, "M").Value = "DBTC"
+            ElseIf InStr(transactionType, "RFUS") > 0 Then
+                 wsOutput.Cells(outputRow, "M").Value = "RFUS"
             Else
                  wsOutput.Cells(outputRow, "M").Value = "EXPT"
             End If
@@ -214,17 +218,15 @@ Sub TransformarDatosInbk()
             
             outputRow = outputRow + 1
 
-            '(MODIFICADO) Bloque consolidado para PSPI, PSPO y DBTC
+            'Bloque consolidado para PSPI, PSPO y DBTC
             If InStr(transactionType, "PSPI") > 0 Or InStr(transactionType, "PSPO") > 0 Or InStr(transactionType, "DBTC") > 0 Then
                 wsOutput.Rows(outputRow - 1).Copy Destination:=wsOutput.Rows(outputRow)
-                
                 descriptionText = wsOutput.Cells(outputRow - 1, "F").Value
                 legalEntity = wsOutput.Cells(outputRow - 1, "L").Value
                 newAccountName = "Cuenta Contrapartida no encontrada"
                 
                 If Not IsEmpty(pspList) Then
                     For pspRow = 1 To UBound(pspList, 1)
-                        ' Condición de doble coincidencia: Entidad (col A) Y Keyword (col B)
                         If UCase(pspList(pspRow, 1)) = UCase(legalEntity) And InStr(1, descriptionText, pspList(pspRow, 2), vbTextCompare) > 0 Then
                             newAccountName = pspList(pspRow, 3)
                             Exit For
@@ -278,11 +280,18 @@ Sub TransformarDatosInbk()
                 outputRow = outputRow + 1
             End If
             
-            'Lógica para crear la segunda línea para transacciones INTC
-            If InStr(transactionType, "INTC") > 0 Then
+            '(MODIFICADO) Bloque consolidado para INTC y RFUS
+            If InStr(transactionType, "INTC") > 0 Or InStr(transactionType, "RFUS") > 0 Then
                 wsOutput.Rows(outputRow - 1).Copy Destination:=wsOutput.Rows(outputRow)
                 
-                wsOutput.Cells(outputRow, "C").Value = "Finance Income:Bank Interest Received"
+                If InStr(transactionType, "INTC") > 0 Then
+                    wsOutput.Cells(outputRow, "C").Value = "Finance Income:Bank Interest Received"
+                    pairPrefix = "INT"
+                Else ' Debe ser RFUS
+                    wsOutput.Cells(outputRow, "C").Value = "OneTouch Balance:OneTouch Balance (PONER PAIS)"
+                    pairPrefix = "RFU"
+                End If
+                
                 wsOutput.Cells(outputRow, "D").Value = wsOutput.Cells(outputRow, "D").Value * -1
                 
                 If wsOutput.Cells(outputRow - 1, "I").Value = "IN" Then
@@ -291,8 +300,8 @@ Sub TransformarDatosInbk()
                     wsOutput.Cells(outputRow, "I").Value = "IN"
                 End If
                 
-                wsOutput.Cells(outputRow - 1, "K").Value = "INT" & i
-                wsOutput.Cells(outputRow, "K").Value = "INT" & i
+                wsOutput.Cells(outputRow - 1, "K").Value = pairPrefix & i
+                wsOutput.Cells(outputRow, "K").Value = pairPrefix & i
                 
                 outputRow = outputRow + 1
             End If
@@ -871,8 +880,8 @@ ErrorHandler:
 End Function
 
 Private Function CollectionToArray(col As Collection) As Variant
-    Dim arr() As Variant
     If col.Count = 0 Then Exit Function
+    Dim arr() As Variant
     ReDim arr(1 To col.Count)
     Dim i As Long
     For i = 1 To col.Count
