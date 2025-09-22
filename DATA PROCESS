@@ -7,7 +7,7 @@ Sub TransformarDatosInbk()
     Dim wb As Workbook
     Dim wsInput As Worksheet, wsOutput As Worksheet, wsAccounts As Worksheet, wsInterCo As Worksheet, wsPSPs As Worksheet, wsSalaries As Worksheet
     Dim wsUnmatchedINBK As Worksheet, wsUnmatchedEXPT As Worksheet, wsUnmatchedFXE As Worksheet
-    Dim lastRowInput As Long, lastRowAccounts As Long, lastDataRow As Long, lastRowInterCo As Long, lastRowPSPs As Long, lastRowSalaries As Long
+    Dim lastRowInput As Long, lastRowAccounts As Long, lastDataRow As long, lastRowInterCo As long, lastRowPSPs As long, lastRowSalaries As Long
     Dim outputRow As Long, rowNum As Long, originalRow As Long, j As Long
     Dim i As Long, k As Long, c As Long, pairIDCounter As Long, pspRow As Long
     
@@ -15,8 +15,10 @@ Sub TransformarDatosInbk()
     Dim copiedINBKRows As Object, copiedEXPTRows As Object, alreadyMatched As Object
     Dim copiedFXERows As Object
     Dim exactIn_INBK As Object, exactOut_INBK As Object, origIn_INBK As Object, origOut_INBK As Object
-    Dim exactIn_EXPT As Object, exactOut_EXPT As Object, origIn_EXPT As Object, origOut_EXPT As Object
+    Dim exptInTransactions As Collection, exptOutTransactions As Collection
+    Dim sortedExptIn As Variant, sortedExptOut As Variant
     Dim exactIn_FXE As Object, exactOut_FXE As Object
+    
     Dim exptMatchedPairs As Collection
     
     Dim txnDate As Date, bitsoDate As Date, targetDate As Date, incomingDate As Date
@@ -43,6 +45,7 @@ Sub TransformarDatosInbk()
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
 
+  
     ' --- CONFIGURACIÓN DE HOJAS DE CÁLCULO ---
     Set wb = ThisWorkbook
     On Error Resume Next
@@ -133,7 +136,6 @@ Sub TransformarDatosInbk()
         
         transactionType = UCase(Trim(wsInput.Cells(i, "F").Value))
       
-        '(MODIFICADO) Se añade el tipo RFUS al bloque de procesamiento principal
         If InStr(transactionType, "INBK") > 0 Or InStr(transactionType, "EXPT") > 0 Or InStr(transactionType, "FXE") > 0 Or InStr(transactionType, "PSPI") > 0 Or InStr(transactionType, "PSPO") > 0 Or InStr(transactionType, "SALR") > 0 Or InStr(transactionType, "INTC") > 0 Or InStr(transactionType, "DBTC") > 0 Or InStr(transactionType, "RFUS") > 0 Then
             txnDate = CDate(wsInput.Cells(i, "H").Value)
             wsOutput.Cells(outputRow, "B").Value = txnDate
@@ -175,12 +177,14 @@ Sub TransformarDatosInbk()
     
             wsOutput.Cells(outputRow, "D").Value = signedAmount
             currentLegalEntity = wsOutput.Cells(outputRow, "L").Value
+            
             If currentLegalEntity = "LARSTAL DENMARK APS" Or currentLegalEntity = "AP DIGITAL SOLUTIONS (CY) LTD" Or currentLegalEntity = "LARSTAL LIMITED" Then
                 wsOutput.Cells(outputRow, "G").Value = "EUR"
             Else
                 wsOutput.Cells(outputRow, "G").Value = "USD"
             End If
             wsOutput.Cells(outputRow, "D").NumberFormat = "#,##0.00"
+   
             wsOutput.Cells(outputRow, "E").Value = ""
             wsOutput.Cells(outputRow, "F").Value = wsInput.Cells(i, "N").Value
             
@@ -193,9 +197,8 @@ Sub TransformarDatosInbk()
             wsOutput.Cells(outputRow, "I").Value = txnDirection
             wsOutput.Cells(outputRow, "J").Value = lookupCode
             
-            '(MODIFICADO) Se añade etiqueta para RFUS
             If InStr(transactionType, "INBK") > 0 Then
-                 wsOutput.Cells(outputRow, "M").Value = "INBK"
+                wsOutput.Cells(outputRow, "M").Value = "INBK"
             ElseIf InStr(transactionType, "FXE") > 0 Then
                  wsOutput.Cells(outputRow, "M").Value = "FXE"
             ElseIf InStr(transactionType, "PSPI") > 0 Then
@@ -218,7 +221,6 @@ Sub TransformarDatosInbk()
             
             outputRow = outputRow + 1
 
-            'Bloque consolidado para PSPI, PSPO y DBTC
             If InStr(transactionType, "PSPI") > 0 Or InStr(transactionType, "PSPO") > 0 Or InStr(transactionType, "DBTC") > 0 Then
                 wsOutput.Rows(outputRow - 1).Copy Destination:=wsOutput.Rows(outputRow)
                 descriptionText = wsOutput.Cells(outputRow - 1, "F").Value
@@ -255,7 +257,6 @@ Sub TransformarDatosInbk()
                 outputRow = outputRow + 1
             End If
             
-            'Lógica para crear la segunda línea para transacciones SALR
             If InStr(transactionType, "SALR") > 0 Then
                 wsOutput.Rows(outputRow - 1).Copy Destination:=wsOutput.Rows(outputRow)
                 companyName = Trim(wsInput.Cells(i, "A").Value)
@@ -280,14 +281,13 @@ Sub TransformarDatosInbk()
                 outputRow = outputRow + 1
             End If
             
-            '(MODIFICADO) Bloque consolidado para INTC y RFUS
             If InStr(transactionType, "INTC") > 0 Or InStr(transactionType, "RFUS") > 0 Then
                 wsOutput.Rows(outputRow - 1).Copy Destination:=wsOutput.Rows(outputRow)
                 
                 If InStr(transactionType, "INTC") > 0 Then
                     wsOutput.Cells(outputRow, "C").Value = "Finance Income:Bank Interest Received"
                     pairPrefix = "INT"
-                Else ' Debe ser RFUS
+                Else
                     wsOutput.Cells(outputRow, "C").Value = "OneTouch Balance:OneTouch Balance (PONER PAIS)"
                     pairPrefix = "RFU"
                 End If
@@ -418,8 +418,7 @@ Sub TransformarDatosInbk()
 
         Set exactIn_INBK = CreateObject("Scripting.Dictionary"): Set exactOut_INBK = CreateObject("Scripting.Dictionary")
         Set origIn_INBK = CreateObject("Scripting.Dictionary"): Set origOut_INBK = CreateObject("Scripting.Dictionary")
-        Set exactIn_EXPT = CreateObject("Scripting.Dictionary"): Set exactOut_EXPT = CreateObject("Scripting.Dictionary")
-        Set origIn_EXPT = CreateObject("Scripting.Dictionary"): Set origOut_EXPT = CreateObject("Scripting.Dictionary")
+        Set exptInTransactions = New Collection: Set exptOutTransactions = New Collection
         Set exactIn_FXE = CreateObject("Scripting.Dictionary"): Set exactOut_FXE = CreateObject("Scripting.Dictionary")
 
         Application.StatusBar = "Paso 3 de 9: Clasificando transacciones para cruce..."
@@ -429,6 +428,7 @@ Sub TransformarDatosInbk()
                 accountCode = wsOutput.Cells(rowNum, "J").Value
                 legalEntity = wsOutput.Cells(rowNum, "L").Value
                 txnType = wsOutput.Cells(rowNum, "M").Value
+                txnDate = wsOutput.Cells(rowNum, "B").Value
              
                 If txnType = "INBK" Then
                     currentFinalAmount = Abs(wsOutput.Cells(rowNum, "D").Value)
@@ -453,28 +453,18 @@ Sub TransformarDatosInbk()
                     End If
                 ElseIf txnType = "EXPT" Then
                     currentFinalAmount_EXPT = Abs(wsOutput.Cells(rowNum, "D").Value)
-                    If currentFinalAmount_EXPT > 0 Then
-                        If direction = "IN" Then
-                            If Not exactIn_EXPT.Exists(currentFinalAmount_EXPT) Then Set exactIn_EXPT(currentFinalAmount_EXPT) = New Collection
-                            exactIn_EXPT(currentFinalAmount_EXPT).Add Array(rowNum, accountCode, legalEntity)
-                        ElseIf direction = "OUT" Then
-                            If Not exactOut_EXPT.Exists(currentFinalAmount_EXPT) Then Set exactOut_EXPT(currentFinalAmount_EXPT) = New Collection
-                            exactOut_EXPT(currentFinalAmount_EXPT).Add Array(rowNum, accountCode, legalEntity)
-                        End If
-                    End If
-                     currentOrigAmount_EXPT = wsOutput.Cells(rowNum, "H").Value
-                     If currentOrigAmount_EXPT > 0 Then
-                        If direction = "IN" Then
-                            If Not origIn_EXPT.Exists(currentOrigAmount_EXPT) Then Set origIn_EXPT(currentOrigAmount_EXPT) = New Collection
-                            origIn_EXPT(currentOrigAmount_EXPT).Add Array(rowNum, accountCode, legalEntity)
-                        ElseIf direction = "OUT" Then
-                            If Not origOut_EXPT.Exists(currentOrigAmount_EXPT) Then Set origOut_EXPT(currentOrigAmount_EXPT) = New Collection
-                            origOut_EXPT(currentOrigAmount_EXPT).Add Array(rowNum, accountCode, legalEntity)
-                        End If
+                    currentOrigAmount_EXPT = wsOutput.Cells(rowNum, "H").Value
+                    descriptionText = wsOutput.Cells(rowNum, "F").Value
+                    Dim dataToStore As Variant
+                    dataToStore = Array(rowNum, accountCode, legalEntity, currentFinalAmount_EXPT, currentOrigAmount_EXPT, txnDate, descriptionText)
+                    
+                    If direction = "IN" Then
+                        exptInTransactions.Add dataToStore
+                    ElseIf direction = "OUT" Then
+                        exptOutTransactions.Add dataToStore
                     End If
                 ElseIf txnType = "FXE" Then
                     bankName = wsOutput.Cells(rowNum, "N").Value
-                    txnDate = wsOutput.Cells(rowNum, "B").Value
                     currentFinalAmount = Abs(wsOutput.Cells(rowNum, "H").Value)
                     If currentFinalAmount > 0 Then
                         If direction = "IN" Then
@@ -655,58 +645,103 @@ Sub TransformarDatosInbk()
             End If
         Next rowNum
 
-        Application.StatusBar = "Paso 7 de 9: Realizando cruces EXPT..."
-        For Each amountKey In exactOut_EXPT.Keys
-            If exactIn_EXPT.Exists(amountKey) Then
-                For Each outData In exactOut_EXPT(amountKey)
-                    If Not alreadyMatched.Exists(outData(0)) Then
-                        For Each inData In exactIn_EXPT(amountKey)
-                            If Not alreadyMatched.Exists(inData(0)) And inData(1) <> outData(1) And inData(2) <> outData(2) Then
-                                wsOutput.Cells(inData(0), "D").Value = Abs(wsOutput.Cells(outData(0), "D").Value)
-                                wsOutput.Cells(inData(0), "B").Value = wsOutput.Cells(outData(0), "B").Value
-                                wsOutput.Cells(inData(0), "A").Value = wsOutput.Cells(outData(0), "A").Value
-                                wsOutput.Cells(outData(0), "D").Interior.Color = lightBlueColor: wsOutput.Cells(inData(0), "D").Interior.Color = lightBlueColor
-                                wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+        ' --- INICIO DE LÓGICA DE CRUCE EXPT ---
+        If exptInTransactions.Count > 0 And exptOutTransactions.Count > 0 Then
+            sortedExptIn = CollectionToArray(exptInTransactions)
+            sortedExptOut = CollectionToArray(exptOutTransactions)
+            
+            BubbleSortArrayByDate sortedExptIn, 5
+            BubbleSortArrayByDate sortedExptOut, 5
+            
+            ' --- PASO 7a: Cruce preliminar de EXPT por descripción ---
+            Application.StatusBar = "Paso 7a de 9: Realizando cruce EXPT por descripción..."
+            Dim allCompanyNames As Variant
+            Dim companyNameVariant As Variant
+            allCompanyNames = Array("ZITTER S.A.", "VALUZ LLP", "FUPET SERVICIOS DE PAGO SA", "MAUAA S.A.S", "SOONER CASH S. DE R.L. DE C.V", "CAFMIN LLP", "ASTRO COLLECTION LLP", "ASTRO INSTITUICAO PAGAMENTOS LTDA", "KEISAI SAC", "ASTROPAY GLOBAL (IOM) LIMITED", "AP DIGITAL (IOM) LIMITED", "TIKREL INVESTMENT S.A.", "ASTROPAY CORPORATION LLP", "ASTROPAY GLOBAL HOLDINGS", "AP GLOBAL CORPORATION LLP", "ASTROPAY HOLDING FINANCEIRA LTDA", "LARSTAL LIMITED", "LARSTAL DENMARK APS", "AP DIGITAL SOLUTIONS (CY) LTD")
+
+            For i = LBound(sortedExptOut) To UBound(sortedExptOut)
+                outData = sortedExptOut(i)
+                If Not alreadyMatched.Exists(outData(0)) Then
+                    Dim outDescription As String: outDescription = UCase(outData(6))
+                    
+                    For Each companyNameVariant In allCompanyNames
+                        If InStr(1, outDescription, UCase(companyNameVariant), vbTextCompare) > 0 Then
+                            Dim targetEntityName As String: targetEntityName = UCase(companyNameVariant)
+                            
+                            For j = LBound(sortedExptIn) To UBound(sortedExptIn)
+                                inData = sortedExptIn(j)
                                 
-                                alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
-                                exptMatchedPairs.Add Array(outData(0), inData(0))
-                                pairIDCounter = pairIDCounter + 1
-                                Exit For
+                                If Not alreadyMatched.Exists(inData(0)) And UCase(inData(2)) = targetEntityName Then
+                                    If outData(3) > 0 And outData(3) = inData(3) And outData(1) <> inData(1) And AreCompaniesConnected(outData(2), inData(2)) Then
+                                        wsOutput.Cells(outData(0), "D").Interior.Color = lightBlueColor: wsOutput.Cells(inData(0), "D").Interior.Color = lightBlueColor
+                                        wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+                                        alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
+                                        exptMatchedPairs.Add Array(outData(0), inData(0))
+                                        pairIDCounter = pairIDCounter + 1
+                                        Exit For
+                                    ElseIf outData(4) > 0 And outData(4) = inData(4) And outData(1) <> inData(1) And AreCompaniesConnected(outData(2), inData(2)) Then
+                                        wsOutput.Cells(outData(0), "D").Interior.Color = normalBlueColor: wsOutput.Cells(inData(0), "D").Interior.Color = normalBlueColor
+                                        wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+                                        alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
+                                        exptMatchedPairs.Add Array(outData(0), inData(0))
+                                        pairIDCounter = pairIDCounter + 1
+                                        Exit For
+                                    End If
+                                End If
+                            Next j
+                            
+                            If alreadyMatched.Exists(outData(0)) Then Exit For
+                        End If
+                    Next companyNameVariant
+                End If
+            Next i
+
+            ' --- PASO 7b: Cruce cronológico para EXPT restantes ---
+            Application.StatusBar = "Paso 7b de 9: Realizando cruce EXPT cronológico..."
+            For i = LBound(sortedExptOut) To UBound(sortedExptOut)
+                outData = sortedExptOut(i)
+                
+                If Not alreadyMatched.Exists(outData(0)) Then
+                    For j = LBound(sortedExptIn) To UBound(sortedExptIn)
+                        inData = sortedExptIn(j)
+                        
+                        If Not alreadyMatched.Exists(inData(0)) Then
+                            If outData(3) > 0 And outData(3) = inData(3) Then
+                                If outData(1) <> inData(1) And outData(2) <> inData(2) And AreCompaniesConnected(outData(2), inData(2)) Then
+                                    wsOutput.Cells(outData(0), "D").Interior.Color = lightBlueColor: wsOutput.Cells(inData(0), "D").Interior.Color = lightBlueColor
+                                    wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+                                    
+                                    alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
+                                    exptMatchedPairs.Add Array(outData(0), inData(0))
+                                    pairIDCounter = pairIDCounter + 1
+                                    Exit For
+                                End If
+                            ElseIf outData(4) > 0 And outData(4) = inData(4) Then
+                                If outData(1) <> inData(1) And outData(2) <> inData(2) And AreCompaniesConnected(outData(2), inData(2)) Then
+                                    wsOutput.Cells(outData(0), "D").Interior.Color = normalBlueColor: wsOutput.Cells(inData(0), "D").Interior.Color = normalBlueColor
+                                    wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+                                    
+                                    alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
+                                    exptMatchedPairs.Add Array(outData(0), inData(0))
+                                    pairIDCounter = pairIDCounter + 1
+                                    Exit For
+                                End If
                             End If
-                        Next inData
-                    End If
-                Next outData
-            End If
-        Next amountKey
+                        End If
+                    Next j
+                End If
+            Next i
+        End If
         
-        For Each amountKey In origOut_EXPT.Keys
-            If origIn_EXPT.Exists(amountKey) Then
-                For Each outData In origOut_EXPT(amountKey)
-                    If Not alreadyMatched.Exists(outData(0)) Then
-                        For Each inData In origIn_EXPT(amountKey)
-                            If Not alreadyMatched.Exists(inData(0)) And inData(1) <> outData(1) And inData(2) <> outData(2) Then
-                                wsOutput.Cells(inData(0), "D").Value = Abs(wsOutput.Cells(outData(0), "D").Value)
-                                wsOutput.Cells(inData(0), "B").Value = wsOutput.Cells(outData(0), "B").Value
-                                wsOutput.Cells(inData(0), "A").Value = wsOutput.Cells(outData(0), "A").Value
-                                wsOutput.Cells(outData(0), "D").Interior.Color = normalBlueColor: wsOutput.Cells(inData(0), "D").Interior.Color = normalBlueColor
-                                wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
-                                
-                                alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
-                                exptMatchedPairs.Add Array(outData(0), inData(0))
-                                pairIDCounter = pairIDCounter + 1
-                                Exit For
-                            End If
-                        Next inData
-                    End If
-                Next outData
-            End If
-        Next amountKey
-        
+        ' --- INICIO DE BLOQUE MODIFICADO ---
         Application.StatusBar = "Paso 8 de 9: Creando asientos intercompañía EXPT..."
         If exptMatchedPairs.Count > 0 Then
             For Each pair In exptMatchedPairs
                 Dim outRow As Long: outRow = pair(0)
                 Dim inRow As Long: inRow = pair(1)
+                
+                ' Obtener el PairID original antes de modificarlo
+                Dim originalPairID As Variant: originalPairID = wsOutput.Cells(outRow, "K").Value
                 
                 Dim pairColor As Long: pairColor = wsOutput.Cells(outRow, "D").Interior.Color
                 
@@ -715,23 +750,40 @@ Sub TransformarDatosInbk()
                 
                 Dim accountName As String
                 
+                ' --- Asiento para la Empresa que Envía (OUT) ---
+                Dim outPairID As String: outPairID = CStr(originalPairID) & ".1"
+                
+                ' 1. Actualizar PairID de la transacción original de SALIDA
+                wsOutput.Cells(outRow, "K").Value = outPairID
+                
+                ' 2. Crear y actualizar la contrapartida intercompañía
                 accountName = GetIntercompanyAccount(outLegalEntity, inLegalEntity, outLegalEntity, intercompanyList)
                 wsOutput.Rows(outRow).Copy wsOutput.Rows(outputRow)
                 wsOutput.Cells(outputRow, "C").Value = accountName
                 wsOutput.Cells(outputRow, "D").Value = wsOutput.Cells(outputRow, "D").Value * -1
                 wsOutput.Cells(outputRow, "I").Value = "IN"
                 wsOutput.Cells(outputRow, "D").Interior.Color = pairColor
+                wsOutput.Cells(outputRow, "K").Value = outPairID ' Asignar el mismo sub-ID
                 outputRow = outputRow + 1
                 
+                ' --- Asiento para la Empresa que Recibe (IN) ---
+                Dim inPairID As String: inPairID = CStr(originalPairID) & ".2"
+                
+                ' 3. Actualizar PairID de la transacción original de ENTRADA
+                wsOutput.Cells(inRow, "K").Value = inPairID
+
+                ' 4. Crear y actualizar la contrapartida intercompañía
                 accountName = GetIntercompanyAccount(outLegalEntity, inLegalEntity, inLegalEntity, intercompanyList)
                 wsOutput.Rows(inRow).Copy wsOutput.Rows(outputRow)
                 wsOutput.Cells(outputRow, "C").Value = accountName
                 wsOutput.Cells(outputRow, "D").Value = wsOutput.Cells(outputRow, "D").Value * -1
                 wsOutput.Cells(outputRow, "I").Value = "OUT"
                 wsOutput.Cells(outputRow, "D").Interior.Color = pairColor
+                wsOutput.Cells(outputRow, "K").Value = inPairID ' Asignar el mismo sub-ID
                 outputRow = outputRow + 1
             Next pair
         End If
+        ' --- FIN DE BLOQUE MODIFICADO ---
 
         Application.StatusBar = "Paso 9 de 9: Ordenando y finalizando..."
         lastDataRow = outputRow - 1
@@ -905,3 +957,47 @@ Private Sub BubbleSortArrayByDate(ByRef arr As Variant, sortByColumnIndex As Int
         Next j
     Next i
 End Sub
+
+Private Function AreCompaniesConnected(ByVal entity1 As String, ByVal entity2 As String) As Boolean
+    Dim E1 As String: E1 = UCase(Trim(entity1))
+    Dim E2 As String: E2 = UCase(Trim(entity2))
+    
+    ' Por defecto, no están conectadas
+    AreCompaniesConnected = False
+    
+    ' Definimos aquí cada conexión del gráfico
+    Select Case E1
+        Case "ZITTER S.A."
+            If E2 = "VALUZ LLP" Or E2 = "ASTRO COLLECTION LLP" Then AreCompaniesConnected = True
+        Case "VALUZ LLP"
+            If E2 = "ZITTER S.A." Or E2 = "ASTRO COLLECTION LLP" Then AreCompaniesConnected = True
+        Case "FUPET SERVICIOS DE PAGO SA", "MAUAA S.A.S", "SOONER CASH S. DE R.L. DE C.V", "CAFMIN LLP"
+            If E2 = "ASTRO COLLECTION LLP" Then AreCompaniesConnected = True
+        Case "ASTRO COLLECTION LLP"
+            If E2 = "ZITTER S.A." Or E2 = "VALUZ LLP" Or E2 = "FUPET SERVICIOS DE PAGO SA" Or E2 = "MAUAA S.A.S" Or E2 = "SOONER CASH S. DE R.L. DE C.V" Or E2 = "CAFMIN LLP" Or E2 = "ASTRO INSTITUICAO PAGAMENTOS LTDA" Or E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Then AreCompaniesConnected = True
+        Case "ASTRO INSTITUICAO PAGAMENTOS LTDA"
+            If E2 = "ASTRO COLLECTION LLP" Or E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Then AreCompaniesConnected = True
+        Case "KEISAI SAC"
+            If E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Then AreCompaniesConnected = True
+        Case "ASTROPAY GLOBAL (IOM) LIMITED"
+            If E2 = "ASTRO COLLECTION LLP" Or E2 = "ASTRO INSTITUICAO PAGAMENTOS LTDA" Or E2 = "KEISAI SAC" Or E2 = "AP DIGITAL (IOM) LIMITED" Or E2 = "TIKREL INVESTMENT S.A." Or E2 = "ASTROPAY GLOBAL HOLDINGS" Or E2 = "LARSTAL DENMARK APS" Then AreCompaniesConnected = True
+        Case "AP DIGITAL (IOM) LIMITED"
+            If E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Then AreCompaniesConnected = True
+        Case "TIKREL INVESTMENT S.A."
+            If E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Or E2 = "ASTROPAY CORPORATION LLP" Or E2 = "ASTROPAY GLOBAL HOLDINGS" Then AreCompaniesConnected = True
+        Case "ASTROPAY CORPORATION LLP"
+            If E2 = "ASTROPAY GLOBAL HOLDINGS" Or E2 = "TIKREL INVESTMENT S.A." Then AreCompaniesConnected = True
+        Case "ASTROPAY GLOBAL HOLDINGS"
+            If E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Or E2 = "TIKREL INVESTMENT S.A." Or E2 = "ASTROPAY CORPORATION LLP" Or E2 = "AP GLOBAL CORPORATION LLP" Or E2 = "AP DIGITAL SOLUTIONS (CY) LTD" Or E2 = "LARSTAL LIMITED" Then AreCompaniesConnected = True
+        Case "AP GLOBAL CORPORATION LLP"
+            If E2 = "ASTROPAY GLOBAL HOLDINGS" Then AreCompaniesConnected = True
+        Case "ASTROPAY HOLDING FINANCEIRA LTDA"
+            If E2 = "ASTROPAY CORPORATION LLP" Or E2 = "ASTROPAY GLOBAL HOLDINGS" Then AreCompaniesConnected = True
+        Case "LARSTAL LIMITED"
+            If E2 = "ASTROPAY GLOBAL HOLDINGS" Or E2 = "LARSTAL DENMARK APS" Then AreCompaniesConnected = True
+        Case "LARSTAL DENMARK APS"
+            If E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Or E2 = "AP DIGITAL SOLUTIONS (CY) LTD" Or E2 = "LARSTAL LIMITED" Then AreCompaniesConnected = True
+        Case "AP DIGITAL SOLUTIONS (CY) LTD"
+            If E2 = "ASTROPAY GLOBAL HOLDINGS" Or E2 = "LARSTAL DENMARK APS" Then AreCompaniesConnected = True
+    End Select
+End Function
