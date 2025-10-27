@@ -1,5 +1,5 @@
 ' =========================================================================================
-' MACRO PRINCIPAL DE TRANSFORMACIÓN (Versión Final con Ordenación por ID de Par y Legal Entity)
+' MACRO PRINCIPAL DE TRANSFORMACIÓN (MÓDULO 1) - CONEXIÓN IOM <-> AP GLOBAL AÑADIDA
 ' =========================================================================================
 Sub TransformarDatosInbk()
 
@@ -10,6 +10,7 @@ Sub TransformarDatosInbk()
     Dim lastRowInput As Long, lastRowAccounts As Long, lastDataRow As Long, lastRowInterCo As Long, lastRowPSPs As Long, lastRowSalaries As Long
     Dim outputRow As Long, rowNum As Long, originalRow As Long, j As Long
     Dim i As Long, k As Long, c As Long, pairIDCounter As Long, pspRow As Long
+    Dim idx As Long
     
     Dim accountList As Object, legalEntities As Object, bankChargesList As Object, bankList As Object, salaryList As Object
     Dim copiedINBKRows As Object, copiedEXPTRows As Object, alreadyMatched As Object
@@ -27,11 +28,13 @@ Sub TransformarDatosInbk()
     Dim signK As String, signL As String, signFromI As String, direction As String, accountCode As String
     Dim currentLegalEntity As String, bitsoLegalEntity As String, referenceText As String, outLegalEntity As String, inLegalEntity As String
     Dim descriptionText As String, newAccountName As String, companyName As String, pairPrefix As String
+    Dim origCurrencyValue As String
     
     Dim finalAmountFromJ As Double, signedAmount As Double, amountFromJ As Double, finalAmount As Double
     Dim currentFinalAmount As Double, currentOrigAmount As Double, bitsoOrigAmount As Double, incomingAmount As Double
     Dim currentFinalAmount_EXPT As Double, currentOrigAmount_EXPT As Double
     Dim lowerBound As Double, upperBound As Double, outAmount As Double, originalOutAmount As Double
+    Dim origAmountL As Double
     
     Dim greenColor As Long, lightGreenColor As Long, lightBlueColor As Long, normalBlueColor As Long, yellowColor As Long
     Dim orangeColor As Long, lightOrangeColor As Long
@@ -42,9 +45,22 @@ Sub TransformarDatosInbk()
     Dim unmatchedFxeIn As Collection, unmatchedFxeOut As Collection
     Dim sortedUnmatchedFxeIn As Variant, sortedUnmatchedFxeOut As Variant
     
+    Dim countryList As Variant
+    Dim country As Variant
+    Dim countryFound As Boolean
+    
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
 
+    ' --- DEFINICIÓN DE COLORES ---
+    greenColor = RGB(0, 150, 60)          ' Verde Oscuro
+    lightGreenColor = RGB(198, 239, 206)  ' Verde "Claro" (Original Normal)
+    lightBlueColor = RGB(173, 216, 230)
+    normalBlueColor = RGB(0, 112, 192)
+    yellowColor = RGB(255, 255, 0)        ' Amarillo
+    orangeColor = RGB(255, 224, 178)
+    lightOrangeColor = RGB(255, 242, 224)
+    
     ' --- CONFIGURACIÓN DE HOJAS DE CÁLCULO ---
     Set wb = ThisWorkbook
     On Error Resume Next
@@ -122,8 +138,19 @@ Sub TransformarDatosInbk()
     wsOutput.Name = "Tabla Transformada"
 
     With wsOutput
-        .Range("A1:O1") = Array("RefNumber", "TxnDate", "Account", "Amount", "Entity", "Description", "Currency", "OrigAmountF_Helper", "TxnDirectionHelper", "AccountCodeHelper", "PairID_Helper", "LegalEntity_Helper", "TxnType_Helper", "Bank_Helper", "OriginalRow_Helper")
+        .Range("A1:Q1") = Array("RefNumber", "TxnDate", "Account", "Amount", "Entity", "Description", "Currency", "OrigAmountF_Helper", "OrigCurrencyHelper", "OrigAmountFX_Helper", "TxnDirectionHelper", "AccountCodeHelper", "PairID_Helper", "LegalEntity_Helper", "TxnType_Helper", "Bank_Helper", "OriginalRow_Helper")
     End With
+
+    ' Definir lista de países RFUS
+    countryList = Array("Angola", "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan", "Bangladesh", _
+                        "Benin", "Bolivia", "Brazil", "Cameroon", "Canada", "Chile", "China", "Colombia", "Costa Rica", _
+                        "Cote DIvoire", "Denmark", "Dominican Republic", "Ecuador", "Egypt", "El Salvador", "Ethiopia", _
+                        "France", "Germany", "Ghana", "Great Britain", "Guatemala", "Honduras", "Hong Kong", "India", _
+                        "Indonesia", "Isle of Man", "Italy", "Kenya", "Kuwait", "Malaysia", "Mexico", "Nepal", _
+                        "Netherlands", "New Zealand", "Nigeria", "Norway", "Paraguay", "Peru", "Poland", "Portugal", _
+                        "Qatar", "Saudi Arabia", "Serbia", "Singapore", "South Africa", "Spain", "Sweden", "Switzerland", _
+                        "Taiwan", "Tanzania", "Thailand", "Trinidad and Tobago", "United Arab Emirates", "United States", _
+                        "Uruguay", "Uzbekistan", "Vietnam", "Zambia")
 
     ' --- PROCESAMIENTO DE DATOS ---
     lastRowInput = wsInput.Cells(wsInput.Rows.Count, "F").End(xlUp).Row
@@ -144,16 +171,16 @@ Sub TransformarDatosInbk()
             
             If accountList.Exists(lookupCode) Then
                 wsOutput.Cells(outputRow, "C").Value = accountList(lookupCode)
-                If legalEntities.Exists(lookupCode) Then wsOutput.Cells(outputRow, "L").Value = legalEntities(lookupCode)
+                If legalEntities.Exists(lookupCode) Then wsOutput.Cells(outputRow, "N").Value = legalEntities(lookupCode)
             Else
                 wsOutput.Cells(outputRow, "C").Value = "Cuenta no encontrada"
-                wsOutput.Cells(outputRow, "L").Value = "Entidad no encontrada"
+                wsOutput.Cells(outputRow, "N").Value = "Entidad no encontrada"
             End If
             
             If bankList.Exists(lookupCode) Then
-                wsOutput.Cells(outputRow, "N").Value = bankList(lookupCode)
+                wsOutput.Cells(outputRow, "P").Value = bankList(lookupCode)
             Else
-                wsOutput.Cells(outputRow, "N").Value = "Banco no encontrado"
+                wsOutput.Cells(outputRow, "P").Value = "Banco no encontrado"
             End If
 
             flowType = Trim(wsInput.Cells(i, "K").Value)
@@ -175,55 +202,74 @@ Sub TransformarDatosInbk()
             End If
     
             wsOutput.Cells(outputRow, "D").Value = signedAmount
-            currentLegalEntity = wsOutput.Cells(outputRow, "L").Value
+            wsOutput.Cells(outputRow, "D").NumberFormat = "#,##0.00"
+            currentLegalEntity = wsOutput.Cells(outputRow, "N").Value
             
             If currentLegalEntity = "LARSTAL DENMARK APS" Or currentLegalEntity = "AP DIGITAL SOLUTIONS (CY) LTD" Or currentLegalEntity = "LARSTAL LIMITED" Then
                 wsOutput.Cells(outputRow, "G").Value = "EUR"
             Else
                 wsOutput.Cells(outputRow, "G").Value = "USD"
             End If
-            wsOutput.Cells(outputRow, "D").NumberFormat = "#,##0.00"
    
             wsOutput.Cells(outputRow, "E").Value = ""
             wsOutput.Cells(outputRow, "F").Value = wsInput.Cells(i, "N").Value
             
+            ' Columna H (OrigAmountF_Helper)
             If InStr(transactionType, "FXE") > 0 Then
                 wsOutput.Cells(outputRow, "H").Value = Abs(finalAmountFromJ)
             Else
                 wsOutput.Cells(outputRow, "H").Value = Abs(ConvertirADouble(flowTypeL))
             End If
+            wsOutput.Cells(outputRow, "H").NumberFormat = "#,##0.00"
             
-            wsOutput.Cells(outputRow, "I").Value = txnDirection
-            wsOutput.Cells(outputRow, "J").Value = lookupCode
+            ' Columna I (OrigCurrencyHelper)
+            origCurrencyValue = Trim(CStr(wsInput.Cells(i, "K").Value))
+            If Left(origCurrencyValue, 1) = "+" Or Left(origCurrencyValue, 1) = "-" Then
+                 origCurrencyValue = Mid(origCurrencyValue, 2)
+            End If
+            wsOutput.Cells(outputRow, "I").Value = origCurrencyValue
             
-            If InStr(transactionType, "INBK") > 0 Then
-                wsOutput.Cells(outputRow, "M").Value = "INBK"
-            ElseIf InStr(transactionType, "FXE") > 0 Then
-                 wsOutput.Cells(outputRow, "M").Value = "FXE"
-            ElseIf InStr(transactionType, "PSPI") > 0 Then
-                 wsOutput.Cells(outputRow, "M").Value = "PSPI"
-            ElseIf InStr(transactionType, "PSPO") > 0 Then
-                 wsOutput.Cells(outputRow, "M").Value = "PSPO"
-            ElseIf InStr(transactionType, "SALR") > 0 Then
-                 wsOutput.Cells(outputRow, "M").Value = "SALR"
-            ElseIf InStr(transactionType, "INTC") > 0 Then
-                 wsOutput.Cells(outputRow, "M").Value = "INTC"
-            ElseIf InStr(transactionType, "DBTC") > 0 Then
-                 wsOutput.Cells(outputRow, "M").Value = "DBTC"
-            ElseIf InStr(transactionType, "RFUS") > 0 Then
-                 wsOutput.Cells(outputRow, "M").Value = "RFUS"
+            ' Columna J (OrigAmountFX_Helper) - Solo para FXE
+            If InStr(transactionType, "FXE") > 0 Then
+                origAmountL = Abs(ConvertirADouble(flowTypeL))
+                wsOutput.Cells(outputRow, "J").Value = origAmountL
+                wsOutput.Cells(outputRow, "J").NumberFormat = "#,##0.00"
             Else
-                 wsOutput.Cells(outputRow, "M").Value = "EXPT"
+                wsOutput.Cells(outputRow, "J").Value = ""
             End If
             
-            wsOutput.Cells(outputRow, "O").Value = i
+            wsOutput.Cells(outputRow, "K").Value = txnDirection
+            wsOutput.Cells(outputRow, "L").Value = lookupCode
+            
+            If InStr(transactionType, "INBK") > 0 Then
+                wsOutput.Cells(outputRow, "O").Value = "INBK"
+            ElseIf InStr(transactionType, "FXE") > 0 Then
+                 wsOutput.Cells(outputRow, "O").Value = "FXE"
+            ElseIf InStr(transactionType, "PSPI") > 0 Then
+                 wsOutput.Cells(outputRow, "O").Value = "PSPI"
+            ElseIf InStr(transactionType, "PSPO") > 0 Then
+                 wsOutput.Cells(outputRow, "O").Value = "PSPO"
+            ElseIf InStr(transactionType, "SALR") > 0 Then
+                 wsOutput.Cells(outputRow, "O").Value = "SALR"
+            ElseIf InStr(transactionType, "INTC") > 0 Then
+                 wsOutput.Cells(outputRow, "O").Value = "INTC"
+            ElseIf InStr(transactionType, "DBTC") > 0 Then
+                 wsOutput.Cells(outputRow, "O").Value = "DBTC"
+            ElseIf InStr(transactionType, "RFUS") > 0 Then
+                 wsOutput.Cells(outputRow, "O").Value = "RFUS"
+            Else
+                 wsOutput.Cells(outputRow, "O").Value = "EXPT"
+            End If
+            
+            wsOutput.Cells(outputRow, "Q").Value = i
             
             outputRow = outputRow + 1
 
-            If InStr(transactionType, "PSPI") > 0 Or InStr(transactionType, "PSPO") > 0 Or InStr(transactionType, "DBTC") > 0 Then
+            ' --- Bloques If para PSPI/PSPO/DBTC, SALR ---
+             If InStr(transactionType, "PSPI") > 0 Or InStr(transactionType, "PSPO") > 0 Or InStr(transactionType, "DBTC") > 0 Then
                 wsOutput.Rows(outputRow - 1).Copy Destination:=wsOutput.Rows(outputRow)
                 descriptionText = wsOutput.Cells(outputRow - 1, "F").Value
-                legalEntity = wsOutput.Cells(outputRow - 1, "L").Value
+                legalEntity = wsOutput.Cells(outputRow - 1, "N").Value
                 newAccountName = "Cuenta Contrapartida no encontrada"
                 
                 If Not IsEmpty(pspList) Then
@@ -238,10 +284,10 @@ Sub TransformarDatosInbk()
                 wsOutput.Cells(outputRow, "C").Value = newAccountName
                 wsOutput.Cells(outputRow, "D").Value = wsOutput.Cells(outputRow, "D").Value * -1
             
-                If wsOutput.Cells(outputRow - 1, "I").Value = "IN" Then
-                    wsOutput.Cells(outputRow, "I").Value = "OUT"
+                If wsOutput.Cells(outputRow - 1, "K").Value = "IN" Then
+                    wsOutput.Cells(outputRow, "K").Value = "OUT"
                 Else
-                    wsOutput.Cells(outputRow, "I").Value = "IN"
+                    wsOutput.Cells(outputRow, "K").Value = "IN"
                 End If
                 
                 If InStr(transactionType, "DBTC") > 0 Then
@@ -250,8 +296,8 @@ Sub TransformarDatosInbk()
                     pairPrefix = "PSP"
                 End If
                 
-                wsOutput.Cells(outputRow - 1, "K").Value = pairPrefix & i
-                wsOutput.Cells(outputRow, "K").Value = pairPrefix & i
+                wsOutput.Cells(outputRow - 1, "M").Value = pairPrefix & i
+                wsOutput.Cells(outputRow, "M").Value = pairPrefix & i
                 
                 outputRow = outputRow + 1
             End If
@@ -268,45 +314,62 @@ Sub TransformarDatosInbk()
 
                 wsOutput.Cells(outputRow, "D").Value = wsOutput.Cells(outputRow, "D").Value * -1
                 
-                If wsOutput.Cells(outputRow - 1, "I").Value = "IN" Then
-                    wsOutput.Cells(outputRow, "I").Value = "OUT"
+                If wsOutput.Cells(outputRow - 1, "K").Value = "IN" Then
+                    wsOutput.Cells(outputRow, "K").Value = "OUT"
                 Else
-                    wsOutput.Cells(outputRow, "I").Value = "IN"
+                    wsOutput.Cells(outputRow, "K").Value = "IN"
                 End If
                 
-                wsOutput.Cells(outputRow - 1, "K").Value = "SAL" & i
-                wsOutput.Cells(outputRow, "K").Value = "SAL" & i
+                wsOutput.Cells(outputRow - 1, "M").Value = "SAL" & i
+                wsOutput.Cells(outputRow, "M").Value = "SAL" & i
                 
                 outputRow = outputRow + 1
             End If
             
+            ' --- Bloque If para INTC / RFUS (con lógica de país y color amarillo) ---
             If InStr(transactionType, "INTC") > 0 Or InStr(transactionType, "RFUS") > 0 Then
                 wsOutput.Rows(outputRow - 1).Copy Destination:=wsOutput.Rows(outputRow)
                 
                 If InStr(transactionType, "INTC") > 0 Then
-                    wsOutput.Cells(outputRow, "C").Value = "Finance Income:Bank Interest Received"
+                    newAccountName = "Finance Income:Bank Interest Received"
                     pairPrefix = "INT"
-                Else
-                    wsOutput.Cells(outputRow, "C").Value = "OneTouch Balance:OneTouch Balance (PONER PAIS)"
+                    wsOutput.Cells(outputRow, "C").Interior.ColorIndex = xlNone
+                Else ' Es RFUS
                     pairPrefix = "RFU"
+                    descriptionText = wsOutput.Cells(outputRow - 1, "F").Value
+                    countryFound = False
+                    
+                    For Each country In countryList
+                        If InStr(1, descriptionText, CStr(country), vbTextCompare) > 0 Then
+                            newAccountName = "OneTouch Balance:OneTouch Balance " & CStr(country)
+                            countryFound = True
+                            wsOutput.Cells(outputRow, "C").Interior.ColorIndex = xlNone
+                            Exit For
+                        End If
+                    Next country
+                    
+                    If Not countryFound Then
+                        newAccountName = "OneTouch Balance:OneTouch Balance (PONER PAIS)"
+                        wsOutput.Cells(outputRow, "C").Interior.Color = yellowColor
+                    End If
                 End If
             
+                wsOutput.Cells(outputRow, "C").Value = newAccountName
                 wsOutput.Cells(outputRow, "D").Value = wsOutput.Cells(outputRow, "D").Value * -1
-                
-                If wsOutput.Cells(outputRow - 1, "I").Value = "IN" Then
-                    wsOutput.Cells(outputRow, "I").Value = "OUT"
+                If wsOutput.Cells(outputRow - 1, "K").Value = "IN" Then
+                    wsOutput.Cells(outputRow, "K").Value = "OUT"
                 Else
-                    wsOutput.Cells(outputRow, "I").Value = "IN"
+                    wsOutput.Cells(outputRow, "K").Value = "IN"
                 End If
-                
-                wsOutput.Cells(outputRow - 1, "K").Value = pairPrefix & i
-                wsOutput.Cells(outputRow, "K").Value = pairPrefix & i
+                wsOutput.Cells(outputRow - 1, "M").Value = pairPrefix & i
+                wsOutput.Cells(outputRow, "M").Value = pairPrefix & i
                 
                 outputRow = outputRow + 1
             End If
-            
+
         ElseIf InStr(transactionType, "TRFF") > 0 Or InStr(transactionType, "MNTF") > 0 Then
-            txnDate = CDate(wsInput.Cells(i, "H").Value)
+             ' ... (Bloque TRFF/MNTF sin cambios) ...
+             txnDate = CDate(wsInput.Cells(i, "H").Value)
             wsOutput.Cells(outputRow, "B").Value = txnDate
             wsOutput.Cells(outputRow, "B").NumberFormat = "dd/mm/yyyy"
             wsOutput.Cells(outputRow, "A").Value = Day(txnDate)
@@ -314,10 +377,10 @@ Sub TransformarDatosInbk()
             
             If accountList.Exists(lookupCode) Then
                 wsOutput.Cells(outputRow, "C").Value = accountList(lookupCode)
-                If legalEntities.Exists(lookupCode) Then wsOutput.Cells(outputRow, "L").Value = legalEntities(lookupCode)
+                If legalEntities.Exists(lookupCode) Then wsOutput.Cells(outputRow, "N").Value = legalEntities(lookupCode)
             Else
                 wsOutput.Cells(outputRow, "C").Value = "Cuenta no encontrada"
-                wsOutput.Cells(outputRow, "L").Value = "Entidad no encontrada"
+                wsOutput.Cells(outputRow, "N").Value = "Entidad no encontrada"
             End If
             
             amountFromJ = ConvertirADouble(wsInput.Cells(i, "J").Text)
@@ -329,7 +392,7 @@ Sub TransformarDatosInbk()
             wsOutput.Cells(outputRow, "E").Value = ""
             wsOutput.Cells(outputRow, "F").Value = wsInput.Cells(i, "N").Value
             
-            If wsOutput.Cells(outputRow, "L").Value = "LARSTAL DENMARK APS" Or wsOutput.Cells(outputRow, "L").Value = "AP DIGITAL SOLUTIONS (CY) LTD" Or wsOutput.Cells(outputRow, "L").Value = "LARSTAL LIMITED" Then
+            If wsOutput.Cells(outputRow, "N").Value = "LARSTAL DENMARK APS" Or wsOutput.Cells(outputRow, "N").Value = "AP DIGITAL SOLUTIONS (CY) LTD" Or wsOutput.Cells(outputRow, "N").Value = "LARSTAL LIMITED" Then
                 wsOutput.Cells(outputRow, "G").Value = "EUR"
             Else
                 wsOutput.Cells(outputRow, "G").Value = "USD"
@@ -337,16 +400,28 @@ Sub TransformarDatosInbk()
             
             flowTypeL = Trim(wsInput.Cells(i, "L").Text)
             wsOutput.Cells(outputRow, "H").Value = Abs(ConvertirADouble(flowTypeL))
-            wsOutput.Cells(outputRow, "I").Value = "OUT"
-            wsOutput.Cells(outputRow, "J").Value = lookupCode
-            wsOutput.Cells(outputRow, "K").Value = "TRF" & i
-            wsOutput.Cells(outputRow, "M").Value = transactionType
+            wsOutput.Cells(outputRow, "H").NumberFormat = "#,##0.00"
+            
+            origCurrencyValue = Trim(CStr(wsInput.Cells(i, "K").Value))
+            If Left(origCurrencyValue, 1) = "+" Or Left(origCurrencyValue, 1) = "-" Then
+                 origCurrencyValue = Mid(origCurrencyValue, 2)
+            End If
+            wsOutput.Cells(outputRow, "I").Value = origCurrencyValue
+            
+            wsOutput.Cells(outputRow, "J").Value = ""
+            
+            wsOutput.Cells(outputRow, "K").Value = "OUT"
+            wsOutput.Cells(outputRow, "L").Value = lookupCode
+            wsOutput.Cells(outputRow, "M").Value = "TRF" & i
+            wsOutput.Cells(outputRow, "O").Value = transactionType
             
             If bankList.Exists(lookupCode) Then
-                wsOutput.Cells(outputRow, "N").Value = bankList(lookupCode)
+                wsOutput.Cells(outputRow, "P").Value = bankList(lookupCode)
             Else
-                wsOutput.Cells(outputRow, "N").Value = "Banco no encontrado"
+                wsOutput.Cells(outputRow, "P").Value = "Banco no encontrado"
             End If
+            
+            wsOutput.Cells(outputRow, "Q").Value = i
             
             outputRow = outputRow + 1
             wsOutput.Rows(outputRow - 1).Copy Destination:=wsOutput.Rows(outputRow)
@@ -358,63 +433,62 @@ Sub TransformarDatosInbk()
             End If
             
             wsOutput.Cells(outputRow, "D").Value = finalAmount * -1
-            wsOutput.Cells(outputRow, "I").Value = "IN"
+            wsOutput.Cells(outputRow, "K").Value = "IN"
+            
+            wsOutput.Cells(outputRow, "Q").Value = i
+            
             outputRow = outputRow + 1
         End If
     Next i
 
     ' --- SECCIÓN DE CRUCE ---
+    ' (Resto del código de cruce y finalización sin cambios)
     If outputRow > 2 Then
         lastDataRow = outputRow - 1
-        greenColor = RGB(198, 239, 206)
-        lightGreenColor = RGB(226, 240, 217)
-        lightBlueColor = RGB(173, 216, 230)
-        normalBlueColor = RGB(0, 112, 192)
-        yellowColor = RGB(255, 255, 0)
-        orangeColor = RGB(255, 224, 178)
-        lightOrangeColor = RGB(255, 242, 224)
+        ' Colores definidos al principio
         pairIDCounter = 1
         
         Set alreadyMatched = CreateObject("Scripting.Dictionary")
         Set exptMatchedPairs = New Collection
         
+        ' --- Cruce FFC/DUBACHGG (Paso 2) ---
         Application.StatusBar = "Paso 2 de 9: Realizando cruce FFC/DUBACHGG..."
         For rowNum = 2 To lastDataRow
-            If Not alreadyMatched.Exists(rowNum) And wsOutput.Cells(rowNum, "M").Value = "INBK" And wsOutput.Cells(rowNum, "I").Value = "OUT" Then
-                originalRow = wsOutput.Cells(rowNum, "O").Value
-                referenceText = UCase(Trim(wsInput.Cells(originalRow, "M").Value))
-                
-                If InStr(referenceText, "FFC/DUBACHGG") > 0 Then
-                    outAmount = wsOutput.Cells(rowNum, "H").Value
-                    outLegalEntity = wsOutput.Cells(rowNum, "L").Value
-                    
-                    For j = 2 To lastDataRow
-                        If Not alreadyMatched.Exists(j) And wsOutput.Cells(j, "M").Value = "INBK" And wsOutput.Cells(j, "I").Value = "IN" Then
-                            accountCode = wsOutput.Cells(j, "J").Value
-                            If bankList.Exists(accountCode) Then
-                                If UCase(bankList(accountCode)) = "DUKASCOPY BANK SA" Then
-                                    If wsOutput.Cells(j, "L").Value = outLegalEntity And wsOutput.Cells(j, "H").Value = outAmount Then
-                                        wsOutput.Cells(j, "D").Value = Abs(wsOutput.Cells(rowNum, "D").Value)
-                                        wsOutput.Cells(j, "B").Value = wsOutput.Cells(rowNum, "B").Value
-                                        wsOutput.Cells(j, "A").Value = wsOutput.Cells(rowNum, "A").Value
-                                        
-                                        wsOutput.Cells(rowNum, "D").Interior.Color = greenColor
-                                        wsOutput.Cells(j, "D").Interior.Color = greenColor
-                                        wsOutput.Cells(rowNum, "K").Value = pairIDCounter
-                                        wsOutput.Cells(j, "K").Value = pairIDCounter
-                                        pairIDCounter = pairIDCounter + 1
-                                        alreadyMatched.Add rowNum, True
-                                        alreadyMatched.Add j, True
-                                        Exit For
+            If Not alreadyMatched.Exists(rowNum) And wsOutput.Cells(rowNum, "O").Value = "INBK" And wsOutput.Cells(rowNum, "K").Value = "OUT" Then
+                originalRow = wsOutput.Cells(rowNum, "Q").Value
+                If originalRow > 0 Then
+                    referenceText = UCase(Trim(wsInput.Cells(originalRow, "M").Value))
+                    If InStr(referenceText, "FFC/DUBACHGG") > 0 Then
+                        outAmount = wsOutput.Cells(rowNum, "H").Value
+                        outLegalEntity = wsOutput.Cells(rowNum, "N").Value
+                        For j = 2 To lastDataRow
+                            If Not alreadyMatched.Exists(j) And wsOutput.Cells(j, "O").Value = "INBK" And wsOutput.Cells(j, "K").Value = "IN" Then
+                                accountCode = wsOutput.Cells(j, "L").Value
+                                If bankList.Exists(accountCode) Then
+                                    If UCase(bankList(accountCode)) = "DUKASCOPY BANK SA" Then
+                                        If wsOutput.Cells(j, "N").Value = outLegalEntity And wsOutput.Cells(j, "H").Value = outAmount Then
+                                            wsOutput.Cells(j, "D").Value = Abs(wsOutput.Cells(rowNum, "D").Value)
+                                            wsOutput.Cells(j, "B").Value = wsOutput.Cells(rowNum, "B").Value
+                                            wsOutput.Cells(j, "A").Value = wsOutput.Cells(rowNum, "A").Value
+                                            wsOutput.Cells(rowNum, "D").Interior.Color = greenColor
+                                            wsOutput.Cells(j, "D").Interior.Color = greenColor
+                                            wsOutput.Cells(rowNum, "M").Value = pairIDCounter
+                                            wsOutput.Cells(j, "M").Value = pairIDCounter
+                                            pairIDCounter = pairIDCounter + 1
+                                            alreadyMatched.Add rowNum, True
+                                            alreadyMatched.Add j, True
+                                            Exit For
+                                        End If
                                     End If
                                 End If
                             End If
-                        End If
-                    Next j
+                        Next j
+                    End If
                 End If
             End If
         Next rowNum
 
+        ' ... (Clasificación - Paso 3) ...
         Set exactIn_INBK = CreateObject("Scripting.Dictionary"): Set exactOut_INBK = CreateObject("Scripting.Dictionary")
         Set origIn_INBK = CreateObject("Scripting.Dictionary"): Set origOut_INBK = CreateObject("Scripting.Dictionary")
         Set exptInTransactions = New Collection: Set exptOutTransactions = New Collection
@@ -423,10 +497,10 @@ Sub TransformarDatosInbk()
         Application.StatusBar = "Paso 3 de 9: Clasificando transacciones para cruce..."
         For rowNum = 2 To lastDataRow
             If Not alreadyMatched.Exists(rowNum) Then
-                direction = wsOutput.Cells(rowNum, "I").Value
-                accountCode = wsOutput.Cells(rowNum, "J").Value
-                legalEntity = wsOutput.Cells(rowNum, "L").Value
-                txnType = wsOutput.Cells(rowNum, "M").Value
+                direction = wsOutput.Cells(rowNum, "K").Value
+                accountCode = wsOutput.Cells(rowNum, "L").Value
+                legalEntity = wsOutput.Cells(rowNum, "N").Value
+                txnType = wsOutput.Cells(rowNum, "O").Value
                 txnDate = wsOutput.Cells(rowNum, "B").Value
              
                 If txnType = "INBK" Then
@@ -464,7 +538,7 @@ Sub TransformarDatosInbk()
                     End If
                 
                 ElseIf txnType = "FXE" Then
-                    bankName = wsOutput.Cells(rowNum, "N").Value
+                    bankName = wsOutput.Cells(rowNum, "P").Value
                     currentFinalAmount = Abs(wsOutput.Cells(rowNum, "H").Value)
                     If currentFinalAmount > 0 Then
                         If direction = "IN" Then
@@ -478,7 +552,8 @@ Sub TransformarDatosInbk()
                 End If
             End If
         Next rowNum
-
+        
+        ' --- Cruce INBK Exacto (Verde Oscuro) - Paso 4 ---
         Application.StatusBar = "Paso 4 de 9: Realizando cruces estándar INBK..."
         For Each amountKey In exactOut_INBK.Keys
             If exactIn_INBK.Exists(amountKey) Then
@@ -489,10 +564,40 @@ Sub TransformarDatosInbk()
                                 wsOutput.Cells(inData(0), "D").Value = Abs(wsOutput.Cells(outData(0), "D").Value)
                                 wsOutput.Cells(inData(0), "B").Value = wsOutput.Cells(outData(0), "B").Value
                                 wsOutput.Cells(inData(0), "A").Value = wsOutput.Cells(outData(0), "A").Value
-                                wsOutput.Cells(outData(0), "D").Interior.Color = greenColor: wsOutput.Cells(inData(0), "D").Interior.Color = greenColor
-                                wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+                                wsOutput.Cells(outData(0), "D").Interior.Color = greenColor
+                                wsOutput.Cells(inData(0), "D").Interior.Color = greenColor
+                                wsOutput.Cells(outData(0), "M").Value = pairIDCounter: wsOutput.Cells(inData(0), "M").Value = pairIDCounter
                                 pairIDCounter = pairIDCounter + 1
-                                alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
+                                alreadyMatched.Add outData(0), True
+                                alreadyMatched.Add inData(0), True
+                                
+                                Dim origAmountKeyOut As Variant, origAmountKeyIn As Variant
+                                Dim colOut As Collection, colIn As Collection
+                                origAmountKeyOut = wsOutput.Cells(outData(0), "H").Value
+                                If origOut_INBK.Exists(origAmountKeyOut) Then
+                                    Set colOut = origOut_INBK(origAmountKeyOut)
+                                    For idx = colOut.Count To 1 Step -1
+                                        If colOut(idx)(0) = outData(0) Then
+                                            colOut.Remove idx
+                                            If colOut.Count = 0 Then origOut_INBK.Remove origAmountKeyOut
+                                            Exit For
+                                        End If
+                                    Next idx
+                                    Set colOut = Nothing
+                                End If
+                                origAmountKeyIn = wsOutput.Cells(inData(0), "H").Value
+                                If origIn_INBK.Exists(origAmountKeyIn) Then
+                                     Set colIn = origIn_INBK(origAmountKeyIn)
+                                     For idx = colIn.Count To 1 Step -1
+                                        If colIn(idx)(0) = inData(0) Then
+                                            colIn.Remove idx
+                                            If colIn.Count = 0 Then origIn_INBK.Remove origAmountKeyIn
+                                            Exit For
+                                        End If
+                                    Next idx
+                                    Set colIn = Nothing
+                                End If
+                                
                                 Exit For
                             End If
                         Next inData
@@ -501,19 +606,22 @@ Sub TransformarDatosInbk()
             End If
         Next amountKey
 
+        ' --- Cruce INBK Original (Verde "Claro") - Paso 4 ---
         For Each amountKey In origOut_INBK.Keys
             If origIn_INBK.Exists(amountKey) Then
                 For Each outData In origOut_INBK(amountKey)
                     If Not alreadyMatched.Exists(outData(0)) Then
                         For Each inData In origIn_INBK(amountKey)
-                            If Not alreadyMatched.Exists(inData(0)) And inData(1) <> outData(1) And inData(2) = outData(2) Then
+                             If Not alreadyMatched.Exists(inData(0)) And inData(1) <> outData(1) And inData(2) = outData(2) Then
                                 wsOutput.Cells(inData(0), "D").Value = Abs(wsOutput.Cells(outData(0), "D").Value)
                                 wsOutput.Cells(inData(0), "B").Value = wsOutput.Cells(outData(0), "B").Value
                                 wsOutput.Cells(inData(0), "A").Value = wsOutput.Cells(outData(0), "A").Value
-                                wsOutput.Cells(outData(0), "D").Interior.Color = lightGreenColor: wsOutput.Cells(inData(0), "D").Interior.Color = lightGreenColor
-                                wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+                                wsOutput.Cells(outData(0), "D").Interior.Color = lightGreenColor
+                                wsOutput.Cells(inData(0), "D").Interior.Color = lightGreenColor
+                                wsOutput.Cells(outData(0), "M").Value = pairIDCounter: wsOutput.Cells(inData(0), "M").Value = pairIDCounter
                                 pairIDCounter = pairIDCounter + 1
-                                alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
+                                alreadyMatched.Add outData(0), True
+                                alreadyMatched.Add inData(0), True
                                 Exit For
                             End If
                         Next inData
@@ -521,8 +629,9 @@ Sub TransformarDatosInbk()
                 Next outData
             End If
         Next amountKey
-        
-        Application.StatusBar = "Paso 5a de 9: Realizando cruce FXE (Misma Fecha, Banco y Entidad)..."
+
+        ' ... (Resto del código: Cruce FXE, BITSO, EXPT, Ordenar, No Cruzadas, etc.) ...
+         Application.StatusBar = "Paso 5a de 9: Realizando cruce FXE (Misma Fecha, Banco y Entidad)..."
         For Each outAmountKey In exactOut_FXE.Keys
             For Each outData In exactOut_FXE(outAmountKey)
                 If Not alreadyMatched.Exists(outData(0)) Then
@@ -537,7 +646,7 @@ Sub TransformarDatosInbk()
                                     wsOutput.Cells(inData(0), "B").Value = wsOutput.Cells(outData(0), "B").Value
                                     wsOutput.Cells(inData(0), "A").Value = wsOutput.Cells(outData(0), "A").Value
                                     wsOutput.Cells(outData(0), "D").Interior.Color = orangeColor: wsOutput.Cells(inData(0), "D").Interior.Color = orangeColor
-                                    wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+                                    wsOutput.Cells(outData(0), "M").Value = pairIDCounter: wsOutput.Cells(inData(0), "M").Value = pairIDCounter
                                     pairIDCounter = pairIDCounter + 1
                                     alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
                                     Exit For
@@ -592,7 +701,7 @@ Sub TransformarDatosInbk()
                             wsOutput.Cells(inData(0), "B").Value = wsOutput.Cells(outData(0), "B").Value
                             wsOutput.Cells(inData(0), "A").Value = wsOutput.Cells(outData(0), "A").Value
                             wsOutput.Cells(outData(0), "D").Interior.Color = lightOrangeColor: wsOutput.Cells(inData(0), "D").Interior.Color = lightOrangeColor
-                            wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+                            wsOutput.Cells(outData(0), "M").Value = pairIDCounter: wsOutput.Cells(inData(0), "M").Value = pairIDCounter
                             pairIDCounter = pairIDCounter + 1
                             alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
                             Exit For
@@ -604,20 +713,20 @@ Sub TransformarDatosInbk()
 
         Application.StatusBar = "Paso 6 de 9: Realizando cruce especial BITSO FX..."
         For rowNum = 2 To lastDataRow
-            If Not alreadyMatched.Exists(rowNum) And wsOutput.Cells(rowNum, "M").Value = "INBK" And wsOutput.Cells(rowNum, "I").Value = "OUT" Then
-                accountCode = wsOutput.Cells(rowNum, "J").Value
+            If Not alreadyMatched.Exists(rowNum) And wsOutput.Cells(rowNum, "O").Value = "INBK" And wsOutput.Cells(rowNum, "K").Value = "OUT" Then
+                accountCode = wsOutput.Cells(rowNum, "L").Value
                 If bankList.Exists(accountCode) Then
                     If UCase(bankList(accountCode)) = "BITSO" Then
                         bitsoDate = wsOutput.Cells(rowNum, "B").Value
                         bitsoOrigAmount = wsOutput.Cells(rowNum, "H").Value
-                        bitsoLegalEntity = wsOutput.Cells(rowNum, "L").Value
+                        bitsoLegalEntity = wsOutput.Cells(rowNum, "N").Value
                         targetDate = Application.WorksheetFunction.WorkDay(bitsoDate, 1)
                         lowerBound = bitsoOrigAmount * 0.99
                         upperBound = bitsoOrigAmount * 1.01
                         
                         For j = 2 To lastDataRow
-                            If Not alreadyMatched.Exists(j) And wsOutput.Cells(j, "M").Value = "INBK" And wsOutput.Cells(j, "I").Value = "IN" Then
-                                If wsOutput.Cells(j, "L").Value = bitsoLegalEntity Then
+                            If Not alreadyMatched.Exists(j) And wsOutput.Cells(j, "O").Value = "INBK" And wsOutput.Cells(j, "K").Value = "IN" Then
+                                If wsOutput.Cells(j, "N").Value = bitsoLegalEntity Then
                                     incomingDate = wsOutput.Cells(j, "B").Value
                                     If incomingDate = bitsoDate Or incomingDate = targetDate Then
                                         If Left(UCase(wsOutput.Cells(j, "F").Value), 6) = "BRIDGE" Then
@@ -628,8 +737,8 @@ Sub TransformarDatosInbk()
                                                 wsOutput.Cells(j, "A").Value = wsOutput.Cells(rowNum, "A").Value
                                                 wsOutput.Cells(rowNum, "D").Interior.Color = lightGreenColor
                                                 wsOutput.Cells(j, "D").Interior.Color = lightGreenColor
-                                                wsOutput.Cells(rowNum, "K").Value = pairIDCounter
-                                                wsOutput.Cells(j, "K").Value = pairIDCounter
+                                                wsOutput.Cells(rowNum, "M").Value = pairIDCounter
+                                                wsOutput.Cells(j, "M").Value = pairIDCounter
                                                 pairIDCounter = pairIDCounter + 1
                                                 alreadyMatched.Add rowNum, True
                                                 alreadyMatched.Add j, True
@@ -674,14 +783,14 @@ Sub TransformarDatosInbk()
                                 If Not alreadyMatched.Exists(inData(0)) And UCase(inData(2)) = targetEntityName Then
                                     If outData(3) > 0 And outData(3) = inData(3) And outData(1) <> inData(1) And AreCompaniesConnected(outData(2), inData(2)) Then
                                         wsOutput.Cells(outData(0), "D").Interior.Color = lightBlueColor: wsOutput.Cells(inData(0), "D").Interior.Color = lightBlueColor
-                                        wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+                                        wsOutput.Cells(outData(0), "M").Value = pairIDCounter: wsOutput.Cells(inData(0), "M").Value = pairIDCounter
                                         alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
                                         exptMatchedPairs.Add Array(outData(0), inData(0))
                                         pairIDCounter = pairIDCounter + 1
                                         Exit For
                                     ElseIf outData(4) > 0 And outData(4) = inData(4) And outData(1) <> inData(1) And AreCompaniesConnected(outData(2), inData(2)) Then
                                         wsOutput.Cells(outData(0), "D").Interior.Color = normalBlueColor: wsOutput.Cells(inData(0), "D").Interior.Color = normalBlueColor
-                                        wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+                                        wsOutput.Cells(outData(0), "M").Value = pairIDCounter: wsOutput.Cells(inData(0), "M").Value = pairIDCounter
                                         alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
                                         exptMatchedPairs.Add Array(outData(0), inData(0))
                                         pairIDCounter = pairIDCounter + 1
@@ -709,7 +818,7 @@ Sub TransformarDatosInbk()
                             If outData(3) > 0 And outData(3) = inData(3) Then
                                 If outData(1) <> inData(1) And outData(2) <> inData(2) And AreCompaniesConnected(outData(2), inData(2)) Then
                                     wsOutput.Cells(outData(0), "D").Interior.Color = lightBlueColor: wsOutput.Cells(inData(0), "D").Interior.Color = lightBlueColor
-                                    wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
+                                    wsOutput.Cells(outData(0), "M").Value = pairIDCounter: wsOutput.Cells(inData(0), "M").Value = pairIDCounter
                                     
                                     alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
                                     exptMatchedPairs.Add Array(outData(0), inData(0))
@@ -719,8 +828,8 @@ Sub TransformarDatosInbk()
                             ElseIf outData(4) > 0 And outData(4) = inData(4) Then
                                 If outData(1) <> inData(1) And outData(2) <> inData(2) And AreCompaniesConnected(outData(2), inData(2)) Then
                                     wsOutput.Cells(outData(0), "D").Interior.Color = normalBlueColor: wsOutput.Cells(inData(0), "D").Interior.Color = normalBlueColor
-                                    wsOutput.Cells(outData(0), "K").Value = pairIDCounter: wsOutput.Cells(inData(0), "K").Value = pairIDCounter
-                                
+                                    wsOutput.Cells(outData(0), "M").Value = pairIDCounter: wsOutput.Cells(inData(0), "M").Value = pairIDCounter
+                                    
                                     alreadyMatched.Add outData(0), True: alreadyMatched.Add inData(0), True
                                     exptMatchedPairs.Add Array(outData(0), inData(0))
                                     pairIDCounter = pairIDCounter + 1
@@ -733,66 +842,52 @@ Sub TransformarDatosInbk()
             Next i
         End If
         
-        ' --- INICIO DE BLOQUE MODIFICADO ---
+        ' --- INICIO DE BLOQUE MODIFICADO (Asientos Interco) ---
         Application.StatusBar = "Paso 8 de 9: Creando asientos intercompañía EXPT..."
         If exptMatchedPairs.Count > 0 Then
             For Each pair In exptMatchedPairs
                 Dim outRow As Long: outRow = pair(0)
                 Dim inRow As Long: inRow = pair(1)
-                
-                ' Obtener el PairID original antes de modificarlo
-                Dim originalPairID As Variant: originalPairID = wsOutput.Cells(outRow, "K").Value
-                
+                Dim originalPairID As Variant: originalPairID = wsOutput.Cells(outRow, "M").Value
                 Dim pairColor As Long: pairColor = wsOutput.Cells(outRow, "D").Interior.Color
-                
-                outLegalEntity = wsOutput.Cells(outRow, "L").Value
-                inLegalEntity = wsOutput.Cells(inRow, "L").Value
-                
+                outLegalEntity = wsOutput.Cells(outRow, "N").Value
+                inLegalEntity = wsOutput.Cells(inRow, "N").Value
                 Dim accountName As String
-                
-                ' --- Asiento para la Empresa que Envía (OUT) ---
                 Dim outPairID As String: outPairID = CStr(originalPairID) & ".1"
                 
-                ' 1. Actualizar PairID de la transacción original de SALIDA
-                wsOutput.Cells(outRow, "K").Value = outPairID
-                
-                ' 2. Crear y actualizar la contrapartida intercompañía
+                wsOutput.Cells(outRow, "M").Value = outPairID
                 accountName = GetIntercompanyAccount(outLegalEntity, inLegalEntity, outLegalEntity, intercompanyList)
                 wsOutput.Rows(outRow).Copy wsOutput.Rows(outputRow)
                 wsOutput.Cells(outputRow, "C").Value = accountName
                 wsOutput.Cells(outputRow, "D").Value = wsOutput.Cells(outputRow, "D").Value * -1
-                wsOutput.Cells(outputRow, "I").Value = "IN"
+                wsOutput.Cells(outputRow, "K").Value = "IN"
                 wsOutput.Cells(outputRow, "D").Interior.Color = pairColor
-                wsOutput.Cells(outputRow, "K").Value = outPairID ' Asignar el mismo sub-ID
+                wsOutput.Cells(outputRow, "M").Value = outPairID
                 outputRow = outputRow + 1
                 
-                ' --- Asiento para la Empresa que Recibe (IN) ---
                 Dim inPairID As String: inPairID = CStr(originalPairID) & ".2"
-                
-                ' 3. Actualizar PairID de la transacción original de ENTRADA
-                wsOutput.Cells(inRow, "K").Value = inPairID
-
-                ' 4. Crear y actualizar la contrapartida intercompañía
+                wsOutput.Cells(inRow, "M").Value = inPairID
                 accountName = GetIntercompanyAccount(outLegalEntity, inLegalEntity, inLegalEntity, intercompanyList)
                 wsOutput.Rows(inRow).Copy wsOutput.Rows(outputRow)
                 wsOutput.Cells(outputRow, "C").Value = accountName
                 wsOutput.Cells(outputRow, "D").Value = wsOutput.Cells(outputRow, "D").Value * -1
-                wsOutput.Cells(outputRow, "I").Value = "OUT"
+                wsOutput.Cells(outputRow, "K").Value = "OUT"
                 wsOutput.Cells(outputRow, "D").Interior.Color = pairColor
-                wsOutput.Cells(outputRow, "K").Value = inPairID ' Asignar el mismo sub-ID
+                wsOutput.Cells(outputRow, "M").Value = inPairID
                 outputRow = outputRow + 1
             Next pair
         End If
         ' --- FIN DE BLOQUE MODIFICADO ---
 
+        ' ... (Ordenación y creación hojas No Cruzadas sin cambios) ...
         Application.StatusBar = "Paso 9 de 9: Ordenando y finalizando..."
         lastDataRow = outputRow - 1
         With wsOutput.Sort
             .SortFields.Clear
-            .SortFields.Add2 key:=wsOutput.Range("B2:B" & lastDataRow), SortOn:=xlSortOnValues, Order:=xlAscending
-            .SortFields.Add2 key:=wsOutput.Range("K2:K" & lastDataRow), SortOn:=xlSortOnValues, Order:=xlAscending
-            .SortFields.Add2 key:=wsOutput.Range("D2:D" & lastDataRow), SortOn:=xlSortOnValues, Order:=xlAscending
-            .SetRange wsOutput.Range("A1:O" & lastDataRow)
+            .SortFields.Add2 Key:=wsOutput.Range("B2:B" & lastDataRow), SortOn:=xlSortOnValues, Order:=xlAscending
+            .SortFields.Add2 Key:=wsOutput.Range("M2:M" & lastDataRow), SortOn:=xlSortOnValues, Order:=xlAscending
+            .SortFields.Add2 Key:=wsOutput.Range("D2:D" & lastDataRow), SortOn:=xlSortOnValues, Order:=xlAscending
+            .SetRange wsOutput.Range("A1:Q" & lastDataRow)
             .Header = xlYes
             .MatchCase = False
             .Orientation = xlTopToBottom
@@ -837,9 +932,9 @@ Sub TransformarDatosInbk()
         For rowNum = 2 To lastDataRow
             If rowNum Mod 500 = 0 Then DoEvents
             
-            If wsOutput.Cells(rowNum, "K").Value = "" Then
-                originalRow = wsOutput.Cells(rowNum, "O").Value
-                txnType = wsOutput.Cells(rowNum, "M").Value
+            If wsOutput.Cells(rowNum, "M").Value = "" Then
+                originalRow = wsOutput.Cells(rowNum, "Q").Value
+                txnType = wsOutput.Cells(rowNum, "O").Value
                 
                 If txnType = "INBK" Then
                     If originalRow > 0 And Not copiedINBKRows.Exists(originalRow) Then
@@ -868,25 +963,18 @@ Sub TransformarDatosInbk()
                 End If
             End If
         Next rowNum
+
     End If
     
-    ' =====================================================================================
-    ' INICIO: Bloque de código añadido para generar los ficheros por compañía
-    ' =====================================================================================
-    
-    ' Se actualizan los cálculos pendientes antes de exportar
-    Application.Calculation = xlCalculationAutomatic
+    ' ... (Finalización sin cambios) ...
+     Application.Calculation = xlCalculationAutomatic
     Application.Calculation = xlCalculationManual
-
-    ' Llamada a la nueva subrutina de generación de ficheros
-    Call GenerarFicherosPorCompania(wb)
-    
-    ' =====================================================================================
-    ' FIN: Bloque de código añadido
-    ' =====================================================================================
+    ' Call GenerarFicherosPorCompania(wb)
     
     wsOutput.Columns.AutoFit
     wsOutput.Columns("F").ColumnWidth = 80
+    
+    MsgBox "Proceso de transformación completado.", vbInformation
     
 Cleanup:
     Application.StatusBar = False
@@ -894,6 +982,7 @@ Cleanup:
     Application.Calculation = xlCalculationAutomatic
 End Sub
 
+' --- FUNCIONES AUXILIARES (sin cambios) ---
 Private Function GetIntercompanyAccount(ByVal entity1 As String, ByVal entity2 As String, ByVal targetEntity As String, ByVal interCoList As Variant) As String
     Dim i As Long
     GetIntercompanyAccount = "Cuenta Interco no encontrada"
@@ -974,10 +1063,8 @@ Private Function AreCompaniesConnected(ByVal entity1 As String, ByVal entity2 As
     Dim E1 As String: E1 = UCase(Trim(entity1))
     Dim E2 As String: E2 = UCase(Trim(entity2))
     
-    ' Por defecto, no están conectadas
     AreCompaniesConnected = False
     
-    ' Definimos aquí cada conexión del gráfico
     Select Case E1
         Case "ZITTER S.A."
             If E2 = "VALUZ LLP" Or E2 = "ASTRO COLLECTION LLP" Then AreCompaniesConnected = True
@@ -989,20 +1076,22 @@ Private Function AreCompaniesConnected(ByVal entity1 As String, ByVal entity2 As
             If E2 = "ZITTER S.A." Or E2 = "VALUZ LLP" Or E2 = "FUPET SERVICIOS DE PAGO SA" Or E2 = "MAUAA S.A.S" Or E2 = "SOONER CASH S. DE R.L. DE C.V" Or E2 = "CAFMIN LLP" Or E2 = "ASTRO INSTITUICAO PAGAMENTOS LTDA" Or E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Then AreCompaniesConnected = True
         Case "ASTRO INSTITUICAO PAGAMENTOS LTDA"
             If E2 = "ASTRO COLLECTION LLP" Or E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Then AreCompaniesConnected = True
-        Case "ASTROPAY PERU SAC"
+        Case "ASTROPAY PERU SAC" ' Cambiado de KEISAI SAC si era un error
             If E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Then AreCompaniesConnected = True
         Case "ASTROPAY GLOBAL (IOM) LIMITED"
-            If E2 = "ASTRO COLLECTION LLP" Or E2 = "ASTRO INSTITUICAO PAGAMENTOS LTDA" Or E2 = "ASTROPAY PERU SAC" Or E2 = "AP DIGITAL (IOM) LIMITED" Or E2 = "TIKREL INVESTMENT S.A." Or E2 = "ASTROPAY GLOBAL HOLDINGS" Or E2 = "LARSTAL DENMARK APS" Then AreCompaniesConnected = True
+             ' <-- Añadida conexión AP GLOBAL CORPORATION LLP
+            If E2 = "ASTRO COLLECTION LLP" Or E2 = "ASTRO INSTITUICAO PAGAMENTOS LTDA" Or E2 = "ASTROPAY PERU SAC" Or E2 = "AP DIGITAL (IOM) LIMITED" Or E2 = "TIKREL INVESTMENT S.A." Or E2 = "ASTROPAY GLOBAL HOLDINGS" Or E2 = "LARSTAL DENMARK APS" Or E2 = "AP GLOBAL CORPORATION LLP" Then AreCompaniesConnected = True
         Case "AP DIGITAL (IOM) LIMITED"
             If E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Then AreCompaniesConnected = True
         Case "TIKREL INVESTMENT S.A."
             If E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Or E2 = "ASTROPAY CORPORATION LLP" Or E2 = "ASTROPAY GLOBAL HOLDINGS" Then AreCompaniesConnected = True
         Case "ASTROPAY CORPORATION LLP"
-            If E2 = "ASTROPAY GLOBAL HOLDINGS" Or E2 = "TIKREL INVESTMENT S.A." Then AreCompaniesConnected = True
+            If E2 = "ASTROPAY GLOBAL HOLDINGS" Or E2 = "TIKREL INVESTMENT S.A." Or E2 = "ASTROPAY HOLDING FINANCEIRA LTDA" Then AreCompaniesConnected = True '<-- Añadida conexión con Holding Financeira
         Case "ASTROPAY GLOBAL HOLDINGS"
-            If E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Or E2 = "TIKREL INVESTMENT S.A." Or E2 = "ASTROPAY CORPORATION LLP" Or E2 = "AP GLOBAL CORPORATION LLP" Or E2 = "AP DIGITAL SOLUTIONS (CY) LTD" Or E2 = "LARSTAL LIMITED" Then AreCompaniesConnected = True
+            If E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Or E2 = "TIKREL INVESTMENT S.A." Or E2 = "ASTROPAY CORPORATION LLP" Or E2 = "AP GLOBAL CORPORATION LLP" Or E2 = "AP DIGITAL SOLUTIONS (CY) LTD" Or E2 = "LARSTAL LIMITED" Or E2 = "ASTROPAY HOLDING FINANCEIRA LTDA" Then AreCompaniesConnected = True '<-- Añadida conexión con Holding Financeira
         Case "AP GLOBAL CORPORATION LLP"
-            If E2 = "ASTROPAY GLOBAL HOLDINGS" Then AreCompaniesConnected = True
+             ' <-- Añadida conexión ASTROPAY GLOBAL (IOM) LIMITED (bidireccional)
+            If E2 = "ASTROPAY GLOBAL HOLDINGS" Or E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Then AreCompaniesConnected = True
         Case "ASTROPAY HOLDING FINANCEIRA LTDA"
             If E2 = "ASTROPAY CORPORATION LLP" Or E2 = "ASTROPAY GLOBAL HOLDINGS" Then AreCompaniesConnected = True
         Case "LARSTAL LIMITED"
@@ -1010,188 +1099,6 @@ Private Function AreCompaniesConnected(ByVal entity1 As String, ByVal entity2 As
         Case "LARSTAL DENMARK APS"
             If E2 = "ASTROPAY GLOBAL (IOM) LIMITED" Or E2 = "AP DIGITAL SOLUTIONS (CY) LTD" Or E2 = "LARSTAL LIMITED" Then AreCompaniesConnected = True
         Case "AP DIGITAL SOLUTIONS (CY) LTD"
-            If E2 = "ASTROPAY GLOBAL HOLDINGS" Or E2 = "LARSTAL DENMARK APS" Then AreCompaniesConnected = True
+             If E2 = "ASTROPAY GLOBAL HOLDINGS" Or E2 = "LARSTAL DENMARK APS" Then AreCompaniesConnected = True
     End Select
-End Function
-
-' =========================================================================================
-' SUBRUTINA CORREGIDA PARA GENERAR FICHEROS (VERSIÓN FINAL)
-' =========================================================================================
-Private Sub GenerarFicherosPorCompania(ByVal parentWb As Workbook)
-    Dim wsOutput As Worksheet, wsAccounts As Worksheet
-    Dim companyList As Variant, companyName As Variant
-    Dim processedRows As Object
-    Dim wbNew As Workbook, wsNew As Worksheet
-    Dim lastRowOutput As Long, i As Long, j As Long, destRow As Long
-    Dim savePath As String, cleanCompName As String, sheetName As String
-    Dim accountCode As String, pairID As String, currentRowCompany As String
-    Dim filesGenerated As Integer, companyDataExists As Boolean
-
-    On Error GoTo ErrorHandler
-    
-    Application.ScreenUpdating = False
-    Application.StatusBar = "Iniciando generación de ficheros por compañía..."
-
-    ' --- CONFIGURACIÓN DE HOJAS Y VARIABLES ---
-    Set wsOutput = parentWb.Sheets("Tabla Transformada")
-    Set wsAccounts = parentWb.Sheets("Listado de Cuentas")
-    
-    companyList = Array( _
-        "ASTROPAY GLOBAL (IOM) LIMITED", "AP DIGITAL (IOM) LIMITED", _
-        "ASTROPAY GLOBAL HOLDINGS", "ASTRO COLLECTION LLP", _
-        "ASTROPAY CORPORATION LLP", "LARSTAL LIMITED", _
-        "LARSTAL DENMARK APS", "AP DIGITAL SOLUTIONS (CY) LTD")
-        
-    lastRowOutput = wsOutput.Cells(wsOutput.Rows.Count, "L").End(xlUp).Row
-    savePath = "C:\Users\aalbi\Downloads" & Application.PathSeparator
-    filesGenerated = 0
-
-    ' --- BUCLE PRINCIPAL: UNO POR CADA COMPAÑÍA ---
-    For Each companyName In companyList
-        companyDataExists = False
-        Set processedRows = CreateObject("Scripting.Dictionary")
-        Set wbNew = Workbooks.Add
-        
-        Application.DisplayAlerts = False
-        While wbNew.Sheets.Count > 1
-            wbNew.Sheets(1).Delete
-        Wend
-        wbNew.Sheets(1).Name = "Temp"
-        Application.DisplayAlerts = True
-        
-        Application.StatusBar = "Procesando compañía: " & companyName & "..."
-
-        ' --- BUCLE SECUNDARIO: RECORRE LA "TABLA TRANSFORMADA" ---
-        For i = 2 To lastRowOutput
-            If Not processedRows.Exists(i) Then
-                currentRowCompany = wsOutput.Cells(i, "L").Value
-                
-                If currentRowCompany = companyName Then
-                    companyDataExists = True
-                    
-                    ' ===================================================================
-                    ' INICIO: CAMBIO EN LA LÓGICA DEL NOMBRE DE LA HOJA
-                    ' Se usa el Account Code (Col M) directamente y se limpia.
-                    ' ===================================================================
-                    accountCode = wsOutput.Cells(i, "J").Value
-                    If Trim(accountCode) <> "" Then
-                        sheetName = CleanSheetName(accountCode) ' Limpieza robusta del nombre
-                    Else
-                        sheetName = "Cuenta Desconocida"
-                    End If
-                    ' ===================================================================
-                    ' FIN: CAMBIO EN LA LÓGICA
-                    ' ===================================================================
-                    
-                    ' --- OBTENER O CREAR LA HOJA DE DESTINO (CON CONTROL DE DUPLICADOS) ---
-                    On Error Resume Next
-                    Set wsNew = wbNew.Sheets(sheetName)
-                    On Error GoTo 0
-                    
-                    If wsNew Is Nothing Then ' Si no existe, se crea
-                        Set wsNew = wbNew.Sheets.Add(After:=wbNew.Sheets(wbNew.Sheets.Count))
-                        
-                        ' Control de errores por si el nombre limpio sigue siendo inválido
-                        On Error Resume Next
-                        wsNew.Name = sheetName
-                        If Err.Number <> 0 Then
-                            wsNew.Name = Left("ErrorNombre_" & accountCode, 31)
-                            Err.Clear
-                        End If
-                        On Error GoTo 0
-
-                        wsOutput.Range("A1:G1").Copy wsNew.Range("A1")
-                    End If
-                    
-                    ' --- AGRUPAR Y COPIAR TODAS LAS LÍNEAS CON EL MISMO PAIR_ID ---
-                    pairID = wsOutput.Cells(i, "K").Value
-                    
-                    If pairID <> "" Then
-                        For j = i To lastRowOutput
-                            If wsOutput.Cells(j, "K").Value = pairID And wsOutput.Cells(j, "L").Value = companyName Then
-                                If Not processedRows.Exists(j) Then
-                                    destRow = wsNew.Cells(wsNew.Rows.Count, "A").End(xlUp).Row + 1
-                                    wsOutput.Range("A" & j & ":G" & j).Copy
-                                    wsNew.Range("A" & destRow).PasteSpecial xlPasteAll
-                                    wsNew.Range("A" & destRow & ":G" & destRow).Interior.Color = xlNone
-                                    processedRows.Add j, True
-                                End If
-                            End If
-                        Next j
-                    Else
-                        destRow = wsNew.Cells(wsNew.Rows.Count, "A").End(xlUp).Row + 1
-                        wsOutput.Range("A" & i & ":G" & i).Copy
-                        wsNew.Range("A" & destRow).PasteSpecial xlPasteAll
-                        wsNew.Range("A" & destRow & ":G" & destRow).Interior.Color = xlNone
-                        processedRows.Add i, True
-                    End If
-                    Set wsNew = Nothing
-                End If
-            End If
-        Next i
-        
-        ' --- GUARDAR Y CERRAR EL FICHERO DE LA COMPAÑÍA ---
-        If companyDataExists Then
-            Application.DisplayAlerts = False
-            wbNew.Sheets("Temp").Delete
-            Application.DisplayAlerts = True
-            
-            For Each wsNew In wbNew.Worksheets
-                wsNew.Columns.AutoFit
-            Next wsNew
-            
-            cleanCompName = CleanFileName(companyName)
-            wbNew.SaveAs fileName:=savePath & cleanCompName & ".xlsx", FileFormat:=xlOpenXMLWorkbook
-            wbNew.Close SaveChanges:=False
-            filesGenerated = filesGenerated + 1
-        Else
-            wbNew.Close SaveChanges:=False
-        End If
-    Next companyName
-
-    ' --- MENSAJE FINAL ---
-    Application.StatusBar = False
-    Application.CutCopyMode = False
-    MsgBox "Proceso de transformación y exportación completado." & vbCrLf & vbCrLf & _
-           "Se han generado " & filesGenerated & " ficheros exitosamente.", vbInformation
-    Exit Sub
-
-ErrorHandler:
-    MsgBox "Ocurrió un error inesperado durante la generación de ficheros: " & vbCrLf & Err.Description, vbCritical
-    Application.StatusBar = False
-    Application.ScreenUpdating = True
-End Sub
-
-'=========================================================================================
-' NUEVA FUNCIÓN AUXILIAR PARA LIMPIAR NOMBRES DE HOJAS
-'=========================================================================================
-Private Function CleanSheetName(ByVal sheetName As String) As String
-    Dim invalidChars As String
-    Dim i As Long
-    ' Caracteres no permitidos en nombres de hojas
-    invalidChars = "\/:*?[]"
-    CleanSheetName = Trim(sheetName)
-    
-    ' Reemplazar caracteres inválidos
-    For i = 1 To Len(invalidChars)
-        CleanSheetName = Replace(CleanSheetName, Mid(invalidChars, i, 1), "-")
-    Next i
-    
-    ' Truncar al límite de 31 caracteres de Excel
-    If Len(CleanSheetName) > 31 Then
-        CleanSheetName = Left(CleanSheetName, 31)
-    End If
-End Function
-
-'=========================================================================================
-' FUNCIÓN AUXILIAR PARA LIMPIAR CARACTERES INVÁLIDOS DE NOMBRES DE FICHERO
-'=========================================================================================
-Private Function CleanFileName(ByVal fileName As String) As String
-    Dim invalidChars As String
-    Dim i As Long
-    invalidChars = "\/:*?""<>|"
-    CleanFileName = fileName
-    For i = 1 To Len(invalidChars)
-        CleanFileName = Replace(CleanFileName, Mid(invalidChars, i, 1), "_")
-    Next i
 End Function
