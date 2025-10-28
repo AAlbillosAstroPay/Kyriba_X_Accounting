@@ -1,8 +1,9 @@
 Option Explicit
 
 ' =========================================================================================
-' MÓDULO 2: POST-PROCESAMIENTO DE DESCRIPCIONES (v14)
-' Propósito: Añade O, H, e I, detalles INBK/EXPT, actualiza Col E y ajusta su ancho.
+' MÓDULO 2: POST-PROCESAMIENTO DE DESCRIPCIONES (v15)
+' Propósito: Añade O, H/J, e I, detalles INBK/EXPT, actualiza Col E y ajusta su ancho.
+'            Usa Col J para FXE en lugar de Col H.
 ' =========================================================================================
 Sub ActualizarDescripciones()
 
@@ -12,7 +13,9 @@ Sub ActualizarDescripciones()
     Dim i As Long, k As Long ' Contadores
     
     Dim tipoTxn As String
-    Dim origAmount As String
+    Dim origAmount As String ' Variable para el importe original a añadir
+    Dim origAmountH As String ' Variable específica para Col H
+    Dim origAmountJ As String ' Variable específica para Col J
     Dim origCurrency As String
     Dim finalCurrency As String
     Dim descripcionOriginal As String
@@ -121,7 +124,19 @@ Sub ActualizarDescripciones()
     ' --- FASE 2: Construir descripciones y actualizar Col E ---
     For i = 2 To lastRow
         tipoTxn = Trim(ws.Cells(i, "O").Value)
-        origAmount = Trim(ws.Cells(i, "H").Text)
+        
+        ' === INICIO DE MODIFICACIÓN: Leer H y J por separado ===
+        origAmountH = Trim(ws.Cells(i, "H").Text) ' Usamos .Text
+        origAmountJ = Trim(ws.Cells(i, "J").Text) ' Usamos .Text
+        
+        ' Asignar el importe correcto a 'origAmount' según tipoTxn
+        If tipoTxn = "FXE" Then
+            origAmount = origAmountJ
+        Else
+            origAmount = origAmountH
+        End If
+        ' === FIN DE MODIFICACIÓN ===
+        
         origCurrency = Trim(ws.Cells(i, "I").Value)
         finalCurrency = Trim(ws.Cells(i, "G").Value)
         descripcionOriginal = Trim(ws.Cells(i, "F").Value)
@@ -132,7 +147,7 @@ Sub ActualizarDescripciones()
         Dim specificTransferText As String: specificTransferText = ""
         agregarDetalles = True
         
-        ' --- Lógica de Excepciones (O, H, I) ---
+        ' --- Lógica de Excepciones (O, H/J, I) ---
         If finalCurrency = "USD" Then
             If origCurrency = "USD" Or origCurrency = "USDC" Or origCurrency = "USC" Or origCurrency = "UST" Or origCurrency = "USDT" Then
                 agregarDetalles = False
@@ -145,9 +160,9 @@ Sub ActualizarDescripciones()
         ' 1. Añadir Columna O
         If Len(tipoTxn) > 0 Then textoAnadir = tipoTxn
         
-        ' 2. Añadir Columnas H e I
+        ' 2. Añadir Columnas H/J e I (si aplica)
         If agregarDetalles Then
-            If Len(origAmount) > 0 Then
+            If Len(origAmount) > 0 Then ' origAmount ahora tiene el valor correcto (de H o J)
                 If Len(textoAnadir) > 0 Then textoAnadir = textoAnadir & " " & origAmount Else textoAnadir = origAmount
             End If
             If Len(origCurrency) > 0 Then
@@ -208,7 +223,6 @@ Sub ActualizarDescripciones()
     
     ' --- PASO FINAL: Ajustar ancho de Columna E ---
     ws.Columns("E").AutoFit
-    ' --- FIN PASO FINAL ---
     
     ' Limpiar diccionarios
     Set inbkPairInfo = Nothing
