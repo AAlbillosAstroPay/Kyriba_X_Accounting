@@ -1,16 +1,15 @@
 Option Explicit
 
 ' =========================================================================================
-' MÓDULO 2: POST-PROCESAMIENTO DE DESCRIPCIONES (v12)
-' Propósito: Añade O, H, e I, y detalles de transferencia INBK y EXPT.
-'            Actualizada la lista de excepciones de USD (USC, UST).
+' MÓDULO 2: POST-PROCESAMIENTO DE DESCRIPCIONES (v14)
+' Propósito: Añade O, H, e I, detalles INBK/EXPT, actualiza Col E y ajusta su ancho.
 ' =========================================================================================
 Sub ActualizarDescripciones()
 
     Dim wb As Workbook
-    Dim ws As Worksheet
-    Dim lastRow As Long
-    Dim i As Long
+    Dim ws As Worksheet, wsEntity As Worksheet ' Hoja de lookup
+    Dim lastRow As Long, lastRowEntity As Long
+    Dim i As Long, k As Long ' Contadores
     
     Dim tipoTxn As String
     Dim origAmount As String
@@ -20,14 +19,14 @@ Sub ActualizarDescripciones()
     Dim textoAnadir As String
     Dim agregarDetalles As Boolean
     
-    ' Variables para la lógica INBK
-    Dim inbkPairInfo As Object ' Diccionario para guardar pares INBK
+    ' Variables INBK
+    Dim inbkPairInfo As Object
     Dim bankPair As Variant
     Dim bankIN As String
     Dim bankOUT As String
     
-    ' Variables para la lógica EXPT
-    Dim exptPairInfo As Object ' Diccionario para guardar pares EXPT
+    ' Variables EXPT
+    Dim exptPairInfo As Object
     Dim pairID As String
     Dim direction As String
     Dim bankName As String
@@ -39,20 +38,46 @@ Sub ActualizarDescripciones()
     Dim entity1 As String
     Dim entity2 As String
     
+    ' Variables para Lookup Entity
+    Dim entityLookup As Object ' Diccionario para lookup
+    Dim entityKey As String
+    Dim account As String
+    Dim lookupValue As String
+    
     ' Configuración inicial
     Set wb = ThisWorkbook
     On Error Resume Next
     Set ws = wb.Sheets("Tabla Transformada")
+    Set wsEntity = wb.Sheets("Listado Entity")
     On Error GoTo 0
     
     If ws Is Nothing Then
         MsgBox "Error: No se encontró la hoja 'Tabla Transformada'.", vbCritical
         Exit Sub
     End If
+    If wsEntity Is Nothing Then
+        MsgBox "Error: No se encontró la hoja 'Listado Entity'.", vbCritical
+        Exit Sub
+    End If
     
     Application.ScreenUpdating = False
     
     lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    lastRowEntity = wsEntity.Cells(wsEntity.Rows.Count, "A").End(xlUp).Row
+    
+    ' --- FASE 0: Cargar datos de "Listado Entity" para Lookup ---
+    Set entityLookup = CreateObject("Scripting.Dictionary")
+    If lastRowEntity >= 2 Then
+        For k = 2 To lastRowEntity
+            legalEntity = Trim(wsEntity.Cells(k, "A").Value)
+            account = Trim(wsEntity.Cells(k, "B").Value)
+            lookupValue = Trim(wsEntity.Cells(k, "C").Value)
+            entityKey = UCase(legalEntity & "|" & account)
+            If Len(legalEntity) > 0 And Len(account) > 0 And Not entityLookup.Exists(entityKey) Then
+                entityLookup.Add entityKey, lookupValue
+            End If
+        Next k
+    End If
     
     ' --- FASE 1A: Pre-procesar todos los pares INBK ---
     Set inbkPairInfo = CreateObject("Scripting.Dictionary")
@@ -62,19 +87,13 @@ Sub ActualizarDescripciones()
             If Len(pairID) > 0 Then
                 direction = Trim(ws.Cells(i, "K").Value)
                 bankName = Trim(ws.Cells(i, "P").Value)
-                
-                If Not inbkPairInfo.Exists(pairID) Then
-                    inbkPairInfo.Add pairID, Array("", "")
-                End If
-                
+                If Not inbkPairInfo.Exists(pairID) Then inbkPairInfo.Add pairID, Array("", "")
                 bankPair = inbkPairInfo(pairID)
-                
                 If direction = "IN" Then
                     bankPair(0) = bankName
                 ElseIf direction = "OUT" Then
                     bankPair(1) = bankName
                 End If
-                
                 inbkPairInfo(pairID) = bankPair
             End If
         End If
@@ -85,62 +104,48 @@ Sub ActualizarDescripciones()
     For i = 2 To lastRow
         If Trim(ws.Cells(i, "O").Value) = "EXPT" Then
             pairID = Trim(ws.Cells(i, "M").Value)
-            commaPos = InStrRev(pairID, ",") ' Buscar coma
-            
+            commaPos = InStrRev(pairID, ",")
             If commaPos > 0 Then
                 baseID = Left(pairID, commaPos - 1)
-                suffix = Mid(pairID, commaPos) ' p.ej., ",1" o ",2"
-                legalEntity = Trim(ws.Cells(i, "N").Value) ' Col N
-                
-                If Not exptPairInfo.Exists(baseID) Then
-                    exptPairInfo.Add baseID, Array("", "") ' (0 = Entidad ,1, 1 = Entidad ,2)
-                End If
-                
+                suffix = Mid(pairID, commaPos)
+                legalEntity = Trim(ws.Cells(i, "N").Value)
+                If Not exptPairInfo.Exists(baseID) Then exptPairInfo.Add baseID, Array("", "")
                 entityPair = exptPairInfo(baseID)
-                
-                If suffix = ",1" And Len(entityPair(0)) = 0 Then
-                    entityPair(0) = legalEntity
-                ElseIf suffix = ",2" And Len(entityPair(1)) = 0 Then
-                    entityPair(1) = legalEntity
-                End If
-                
+                If suffix = ",1" And Len(entityPair(0)) = 0 Then entityPair(0) = legalEntity
+                If suffix = ",2" And Len(entityPair(1)) = 0 Then entityPair(1) = legalEntity
                 exptPairInfo(baseID) = entityPair
             End If
         End If
     Next i
     
-    ' --- FASE 2: Construir las descripciones ---
+    ' --- FASE 2: Construir descripciones y actualizar Col E ---
     For i = 2 To lastRow
         tipoTxn = Trim(ws.Cells(i, "O").Value)
         origAmount = Trim(ws.Cells(i, "H").Text)
         origCurrency = Trim(ws.Cells(i, "I").Value)
         finalCurrency = Trim(ws.Cells(i, "G").Value)
         descripcionOriginal = Trim(ws.Cells(i, "F").Value)
+        legalEntity = Trim(ws.Cells(i, "N").Value)
+        account = Trim(ws.Cells(i, "C").Value)
         
         textoAnadir = ""
         Dim specificTransferText As String: specificTransferText = ""
         agregarDetalles = True
         
         ' --- Lógica de Excepciones (O, H, I) ---
-        ' Excepción 1: USD
         If finalCurrency = "USD" Then
             If origCurrency = "USD" Or origCurrency = "USDC" Or origCurrency = "USC" Or origCurrency = "UST" Or origCurrency = "USDT" Then
                 agregarDetalles = False
             End If
         End If
-        ' Excepción 2: EUR
         If finalCurrency = "EUR" And origCurrency = "EUR" Then
             agregarDetalles = False
         End If
-        ' --- FIN DE LÓGICA DE EXCEPCIONES ---
         
+        ' 1. Añadir Columna O
+        If Len(tipoTxn) > 0 Then textoAnadir = tipoTxn
         
-        ' 1. Añadir Columna O (siempre)
-        If Len(tipoTxn) > 0 Then
-            textoAnadir = tipoTxn
-        End If
-        
-        ' 2. Añadir Columnas H e I (si aplica)
+        ' 2. Añadir Columnas H e I
         If agregarDetalles Then
             If Len(origAmount) > 0 Then
                 If Len(textoAnadir) > 0 Then textoAnadir = textoAnadir & " " & origAmount Else textoAnadir = origAmount
@@ -150,85 +155,68 @@ Sub ActualizarDescripciones()
             End If
         End If
         
-        ' 3. Añadir detalles de transferencia (INBK o EXPT)
+        ' 3. Añadir detalles de transferencia
         If tipoTxn = "INBK" Then
             pairID = Trim(ws.Cells(i, "M").Value)
             If Len(pairID) > 0 And inbkPairInfo.Exists(pairID) Then
                 bankPair = inbkPairInfo(pairID)
-                bankIN = CStr(bankPair(0))
-                bankOUT = CStr(bankPair(1))
-                
+                bankIN = CStr(bankPair(0)): bankOUT = CStr(bankPair(1))
                 If Len(bankIN) > 0 And Len(bankOUT) > 0 Then
-                    If bankIN = bankOUT Then
-                        specificTransferText = "Transfer between " & bankIN & " accounts - "
-                    Else
-                        specificTransferText = "Transfer from " & bankOUT & " to " & bankIN & " - "
-                    End If
+                    If bankIN = bankOUT Then specificTransferText = "Transfer between " & bankIN & " accounts - " Else specificTransferText = "Transfer from " & bankOUT & " to " & bankIN & " - "
                 Else
                     specificTransferText = "[BANK] - "
                 End If
             Else
                 specificTransferText = "[BANK] - "
             End If
-            
         ElseIf tipoTxn = "EXPT" Then
             pairID = Trim(ws.Cells(i, "M").Value)
             commaPos = InStrRev(pairID, ",")
-            
             If commaPos > 0 Then
                 baseID = Left(pairID, commaPos - 1)
-                
                 If exptPairInfo.Exists(baseID) Then
                     entityPair = exptPairInfo(baseID)
-                    entity1 = CStr(entityPair(0)) ' Entidad del par ,1
-                    entity2 = CStr(entityPair(1)) ' Entidad del par ,2
-                    
-                    If Len(entity1) > 0 And Len(entity2) > 0 Then
-                        specificTransferText = "Transfer between " & entity1 & " and " & entity2 & " - "
-                    Else
-                        specificTransferText = "[ENTITY] - " ' Par incompleto
-                    End If
+                    entity1 = CStr(entityPair(0)): entity2 = CStr(entityPair(1))
+                    If Len(entity1) > 0 And Len(entity2) > 0 Then specificTransferText = "Transfer between " & entity1 & " and " & entity2 & " - " Else specificTransferText = "[ENTITY] - "
                 Else
-                    specificTransferText = "[ENTITY] - " ' No se encontró el BaseID
+                    specificTransferText = "[ENTITY] - "
                 End If
             End If
-            
         End If
         
-        ' 4. Combinar todo
+        ' 4. Combinar textos para Col F
         Dim combinedText As String: combinedText = ""
-        
-        If Len(textoAnadir) > 0 Then
-            combinedText = textoAnadir
-        End If
-        
+        If Len(textoAnadir) > 0 Then combinedText = textoAnadir
         If Len(specificTransferText) > 0 Then
-            If Len(combinedText) > 0 Then
-                combinedText = combinedText & " " & specificTransferText
-            Else
-                combinedText = specificTransferText
-            End If
+            If Len(combinedText) > 0 Then combinedText = combinedText & " " & specificTransferText Else combinedText = specificTransferText
         End If
         
-        ' 5. Escribir en la celda
+        ' 5. Escribir en Col F
         If Len(combinedText) > 0 Then
-            If Len(descripcionOriginal) > 0 Then
-                ws.Cells(i, "F").Value = combinedText & " " & descripcionOriginal
-            Else
-                ws.Cells(i, "F").Value = combinedText
+            If Len(descripcionOriginal) > 0 Then ws.Cells(i, "F").Value = combinedText & " " & descripcionOriginal Else ws.Cells(i, "F").Value = combinedText
+        End If
+        
+        ' 6. Actualizar Columna E desde "Listado Entity"
+        If Len(legalEntity) > 0 And Len(account) > 0 Then
+            entityKey = UCase(legalEntity & "|" & account)
+            If entityLookup.Exists(entityKey) Then
+                ws.Cells(i, "E").Value = entityLookup(entityKey)
             End If
-        Else
-            ' No se añade nada, la descripción original ya está en la celda
         End If
         
     Next i
     
+    ' --- PASO FINAL: Ajustar ancho de Columna E ---
+    ws.Columns("E").AutoFit
+    ' --- FIN PASO FINAL ---
+    
     ' Limpiar diccionarios
     Set inbkPairInfo = Nothing
     Set exptPairInfo = Nothing
+    Set entityLookup = Nothing
     
     Application.ScreenUpdating = True
     
-    MsgBox "Proceso de actualización de descripciones completado.", vbInformation
+    MsgBox "Proceso de actualización de descripciones y entidad completado.", vbInformation
 
 End Sub
